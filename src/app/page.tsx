@@ -1,65 +1,123 @@
-import Image from "next/image";
+import Link from "next/link";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DashboardPipelineTrigger } from "@/components/pipeline/dashboard-pipeline-trigger";
+import { RunLogStream } from "@/components/pipeline/run-log-stream";
+import { StatCards } from "@/components/pipeline/stat-cards";
+import { supabaseServer } from "@/lib/supabase/server";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+async function getDashboardData() {
+  const [
+    { count: leads },
+    { count: emails },
+    { count: campaigns },
+    { count: activeRuns },
+    campaignsResp,
+    runsResp,
+  ] = await Promise.all([
+    supabaseServer.from("leads").select("*", { count: "exact", head: true }),
+    supabaseServer.from("emails_sent").select("*", { count: "exact", head: true }),
+    supabaseServer.from("campaigns").select("*", { count: "exact", head: true }),
+    supabaseServer.from("pipeline_runs").select("*", { count: "exact", head: true }).eq("status", "running"),
+    supabaseServer
+      .from("campaigns")
+      .select("id,name,leads_per_run,daily_send_limit")
+      .order("created_at", { ascending: false }),
+    supabaseServer
+      .from("pipeline_runs")
+      .select("id,campaign_id,status,current_stage,leads_generated,started_at,run_mode,start_stage,end_stage")
+      .order("started_at", { ascending: false })
+      .limit(8),
+  ]);
+  const observedRun = runsResp.data?.[0];
+  const logsResp = observedRun
+    ? await supabaseServer
+        .from("run_logs")
+        .select("*")
+        .eq("run_id", observedRun.id)
+        .order("ts", { ascending: false })
+        .limit(20)
+    : await supabaseServer.from("run_logs").select("*").order("ts", { ascending: false }).limit(8);
+
+  return {
+    leads: leads ?? 0,
+    emails: emails ?? 0,
+    campaigns: campaigns ?? 0,
+    activeRuns: activeRuns ?? 0,
+    logs: logsResp.data ?? [],
+    observedRun:
+      observedRun ??
+      null,
+    campaignOptions: campaignsResp.data ?? [],
+    recentRuns: runsResp.data ?? [],
+  };
+}
+
+export default async function HomePage() {
+  const data = await getDashboardData();
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">Monitor campaigns, agent runs, and outreach activity.</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <Button asChild variant="outline">
+          <Link href="/campaigns">View Campaigns</Link>
+        </Button>
+      </div>
+
+      <DashboardPipelineTrigger campaigns={data.campaignOptions} />
+
+      <StatCards
+        leads={data.leads}
+        emails={data.emails}
+        campaigns={data.campaigns}
+        activeRuns={data.activeRuns}
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Pipeline Runs</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {data.recentRuns.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No pipeline runs yet.</p>
+          ) : (
+            data.recentRuns.map((run) => {
+              const campaign = data.campaignOptions.find((item) => item.id === run.campaign_id);
+              return (
+                <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border p-2">
+                  <div>
+                    <Link href={`/campaigns/${run.campaign_id}`} className="font-medium text-primary underline">
+                      {campaign?.name ?? "Unknown campaign"}
+                    </Link>
+                    <p className="text-xs text-muted-foreground">
+                      Stage: {run.current_stage ?? "-"} • Leads: {run.leads_generated ?? 0} •{" "}
+                      {run.run_mode === "custom" ? `${run.start_stage ?? "-"} -> ${run.end_stage ?? "-"}` : "full"} •{" "}
+                      {new Date(run.started_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <Badge variant={run.status === "failed" ? "destructive" : "outline"}>{run.status}</Badge>
+                </div>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
+
+      <RunLogStream
+        logs={data.logs}
+        runId={data.observedRun?.id}
+        initialRunStatus={{
+          status: data.observedRun?.status ?? null,
+          currentStage: data.observedRun?.current_stage ?? null,
+        }}
+      />
     </div>
   );
 }

@@ -1,0 +1,80 @@
+import { z } from "zod";
+import { EXECUTABLE_PIPELINE_STAGES, type ExecutablePipelineStage } from "@/lib/pipeline/stages";
+
+const boundedInt = (min: number, max: number) => z.number().int().min(min).max(max);
+
+export const pipelineRunConfigSchema = z
+  .object({
+    leadGeneration: z
+      .object({
+        maxLeads: boundedInt(1, 500),
+      })
+      .optional(),
+    peopleDiscovery: z
+      .object({
+        maxContacts: boundedInt(1, 2000),
+      })
+      .optional(),
+    enrichment: z
+      .object({
+        maxContacts: boundedInt(1, 2000),
+      })
+      .optional(),
+    scoring: z
+      .object({
+        maxContacts: boundedInt(1, 2000),
+      })
+      .optional(),
+    email: z
+      .object({
+        maxSends: boundedInt(1, 500),
+        useTestMode: z.boolean().optional(),
+        testRecipientEmails: z.array(z.string().email()).max(50).optional(),
+      })
+      .optional(),
+  })
+  .default({});
+
+export type PipelineRunConfig = z.infer<typeof pipelineRunConfigSchema>;
+
+const stageToConfigKey: Record<ExecutablePipelineStage, keyof PipelineRunConfig> = {
+  lead_generation: "leadGeneration",
+  people_discovery: "peopleDiscovery",
+  enrichment: "enrichment",
+  scoring: "scoring",
+  email: "email",
+};
+
+export function normalizeRunConfig(
+  runConfig: PipelineRunConfig | undefined,
+  selectedStages: ExecutablePipelineStage[],
+): PipelineRunConfig {
+  const parsed = pipelineRunConfigSchema.parse(runConfig ?? {});
+  const selected = new Set(selectedStages);
+  const normalized: PipelineRunConfig = {};
+
+  for (const stage of EXECUTABLE_PIPELINE_STAGES) {
+    if (!selected.has(stage)) continue;
+    if (stage === "lead_generation" && parsed.leadGeneration) {
+      normalized.leadGeneration = parsed.leadGeneration;
+    }
+    if (stage === "people_discovery" && parsed.peopleDiscovery) {
+      normalized.peopleDiscovery = parsed.peopleDiscovery;
+    }
+    if (stage === "enrichment" && parsed.enrichment) {
+      normalized.enrichment = parsed.enrichment;
+    }
+    if (stage === "scoring" && parsed.scoring) {
+      normalized.scoring = parsed.scoring;
+    }
+    if (stage === "email" && parsed.email) {
+      normalized.email = parsed.email;
+    }
+  }
+
+  return normalized;
+}
+
+export function getStageConfigKey(stage: ExecutablePipelineStage): keyof PipelineRunConfig {
+  return stageToConfigKey[stage];
+}
