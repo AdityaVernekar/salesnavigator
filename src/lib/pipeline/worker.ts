@@ -1,8 +1,17 @@
 import { mastra } from "@/mastra";
-import { dequeuePipelineJob, enqueuePipelineJob, getPipelineQueueDepth } from "@/lib/pipeline/queue";
+import {
+  dequeuePipelineJob,
+  enqueuePipelineJob,
+  enqueueStageJobIds,
+  getPipelineQueueDepth,
+  getStageQueueDepth,
+} from "@/lib/pipeline/queue";
 import { logRunEvent, updateRunState } from "@/lib/pipeline/run-state";
 import { supabaseServer } from "@/lib/supabase/server";
 import type { WorkflowStreamEvent } from "@mastra/core/workflows";
+import { env } from "@/lib/config/env";
+import { planChunkedStageJobs } from "@/lib/pipeline/chunk-planner";
+import { createStageJobs } from "@/lib/pipeline/job-store";
 
 const MAX_ATTEMPTS = 3;
 const STALE_QUEUED_MINUTES = 45;
@@ -68,9 +77,66 @@ type WorkerResult =
       processed: true;
       runId: string;
       queueDepth: number;
-      status: "completed" | "failed" | "retrying" | "skipped";
+      status: "completed" | "failed" | "retrying" | "skipped" | "orchestrated";
       attempt: number;
     };
+
+async function orchestrateChunkedRun(job: {
+  runId: string;
+  campaignId: string;
+  runConfig: Record<string, unknown>;
+  selectedStages: Array<"lead_generation" | "people_discovery" | "enrichment" | "scoring" | "email">;
+}) {
+  const { data: campaign } = await supabaseServer
+    .from("campaigns")
+    .select("leads_per_run,daily_send_limit")
+    .eq("id", job.campaignId)
+    .single();
+
+  const planned = planChunkedStageJobs(
+    {
+      runId: job.runId,
+      campaignId: job.campaignId,
+      trigger: "manual",
+      runMode: "custom",
+      startStage: null,
+      endStage: null,
+      selectedStages: job.selectedStages,
+      runConfig: job.runConfig,
+      enqueuedAt: new Date().toISOString(),
+      attempt: 1,
+    },
+    {
+      leadsPerRun: campaign?.leads_per_run ?? null,
+      dailySendLimit: campaign?.daily_send_limit ?? null,
+    },
+  );
+
+  const stageRows = await createStageJobs(
+    planned.map((item) => ({
+      runId: job.runId,
+      campaignId: job.campaignId,
+      stage: item.stage,
+      idempotencyKey: item.idempotencyKey,
+      chunkIndex: item.chunkIndex,
+      chunkSize: item.chunkSize,
+      payload: item.payload,
+    })),
+  );
+
+  const queuedStageJobIds = stageRows
+    .filter((row) => row.status === "queued")
+    .map((row) => String(row.id))
+    .filter(Boolean);
+  await enqueueStageJobIds(queuedStageJobIds);
+
+  await logRunEvent(job.runId, "pipeline", "info", "Chunked stage jobs orchestrated", {
+    plannedJobs: planned.length,
+    queuedJobs: queuedStageJobIds.length,
+    queueDepth: await getStageQueueDepth(),
+    executionMode: env.PIPELINE_EXECUTION_MODE,
+  });
+}
 
 async function reconcileStaleQueuedRuns(): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_QUEUED_MINUTES * 60_000).toISOString();
@@ -151,6 +217,22 @@ export async function processNextPipelineJob(): Promise<WorkerResult> {
       error: null,
     });
 
+    if (env.PIPELINE_EXECUTION_MODE === "chunked") {
+      await orchestrateChunkedRun({
+        runId: job.runId,
+        campaignId: job.campaignId,
+        runConfig: job.runConfig as Record<string, unknown>,
+        selectedStages: job.selectedStages,
+      });
+      return {
+        processed: true,
+        runId: job.runId,
+        queueDepth,
+        status: "orchestrated",
+        attempt,
+      };
+    }
+
     const workflow = mastra.getWorkflow("salesPipelineWorkflow");
     const workflowRun = await workflow.createRun();
     const stream = workflowRun.stream({
@@ -161,7 +243,8 @@ export async function processNextPipelineJob(): Promise<WorkerResult> {
         runConfig: job.runConfig,
       },
     });
-    for await (const event of stream) {
+    const eventStream = (stream as { fullStream?: AsyncIterable<WorkflowStreamEvent> }).fullStream ?? stream;
+    for await (const event of eventStream) {
       await logRunEvent(job.runId, getEventAgentType(event), workflowEventLevel(event), workflowEventMessage(event), {
         eventType: event.type,
         eventPayload: event.payload,

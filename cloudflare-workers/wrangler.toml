@@ -1,0 +1,7 @@
+name = "salesnav-workers"
+main = "worker-lead-gen.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+APP_URL = "http://localhost:3000"
+CRON_SECRET = "replace-with-cron-secret"

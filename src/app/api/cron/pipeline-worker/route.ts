@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "@/lib/config/env";
-import { finishCronRun, startCronRun } from "@/lib/cron/run-logs";
-import { processNextPipelineJob } from "@/lib/pipeline/worker";
+import { runBurstWithCronLog, runPipelineWorkerBurst } from "@/lib/pipeline/worker-runtime";
 
 function assertCronSecret(request: NextRequest) {
   const secret = request.headers.get("x-cron-secret");
@@ -11,49 +10,21 @@ function assertCronSecret(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  let cronRunId: string | null = null;
-  let startedAt = new Date().toISOString();
   try {
     assertCronSecret(request);
     const url = new URL(request.url);
     const maxJobs = Math.min(Number(url.searchParams.get("maxJobs") ?? "1"), 10);
     const concurrency = Math.max(1, Math.min(Number(url.searchParams.get("concurrency") ?? "2"), maxJobs, 5));
-    const started = await startCronRun("pipeline-worker", { maxJobs });
-    cronRunId = started.id;
-    startedAt = started.startedAt;
-    const results: unknown[] = [];
-    let shouldStop = false;
-    let processedCount = 0;
-
-    const workerLoop = async () => {
-      while (!shouldStop && processedCount < maxJobs) {
-        processedCount += 1;
-        const result = await processNextPipelineJob();
-        results.push(result);
-        if (!result.processed) {
-          shouldStop = true;
-          break;
-        }
-      }
-    };
-
-    await Promise.all(Array.from({ length: concurrency }, () => workerLoop()));
-
-    await finishCronRun(cronRunId, startedAt, "success", {
-      maxJobs,
-      concurrency,
-      processed: results.length,
-    });
+    const result = await runBurstWithCronLog("pipeline-worker", { maxJobs, concurrency }, () =>
+      runPipelineWorkerBurst({ maxJobs, concurrency }),
+    );
 
     return NextResponse.json({
       ok: true,
-      processed: results.length,
-      concurrency,
-      results,
+      ...result,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Cron pipeline worker failed";
-    await finishCronRun(cronRunId, startedAt, "failed", {}, message);
     return NextResponse.json(
       {
         ok: false,

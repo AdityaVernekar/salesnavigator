@@ -5,6 +5,8 @@ const boundedInt = (min: number, max: number) => z.number().int().min(min).max(m
 
 export const pipelineRunConfigSchema = z
   .object({
+    /** When set, pipeline stages only process these leads (Clay-style run from leads list). */
+    leadIds: z.array(z.string().uuid()).max(500).optional(),
     leadGeneration: z
       .object({
         maxLeads: boundedInt(1, 500),
@@ -53,6 +55,9 @@ export function normalizeRunConfig(
   const selected = new Set(selectedStages);
   const normalized: PipelineRunConfig = {};
 
+  if (parsed.leadIds?.length) {
+    normalized.leadIds = parsed.leadIds;
+  }
   for (const stage of EXECUTABLE_PIPELINE_STAGES) {
     if (!selected.has(stage)) continue;
     if (stage === "lead_generation" && parsed.leadGeneration) {

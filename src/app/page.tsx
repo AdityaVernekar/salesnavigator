@@ -3,7 +3,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DashboardPipelineTrigger } from "@/components/pipeline/dashboard-pipeline-trigger";
-import { RunLogStream } from "@/components/pipeline/run-log-stream";
 import { StatCards } from "@/components/pipeline/stat-cards";
 import { supabaseServer } from "@/lib/supabase/server";
 
@@ -32,25 +31,12 @@ async function getDashboardData() {
       .order("started_at", { ascending: false })
       .limit(8),
   ]);
-  const observedRun = runsResp.data?.[0];
-  const logsResp = observedRun
-    ? await supabaseServer
-        .from("run_logs")
-        .select("*")
-        .eq("run_id", observedRun.id)
-        .order("ts", { ascending: false })
-        .limit(20)
-    : await supabaseServer.from("run_logs").select("*").order("ts", { ascending: false }).limit(8);
 
   return {
     leads: leads ?? 0,
     emails: emails ?? 0,
     campaigns: campaigns ?? 0,
     activeRuns: activeRuns ?? 0,
-    logs: logsResp.data ?? [],
-    observedRun:
-      observedRun ??
-      null,
     campaignOptions: campaignsResp.data ?? [],
     recentRuns: runsResp.data ?? [],
   };
@@ -66,9 +52,14 @@ export default async function HomePage() {
           <h1 className="text-2xl font-semibold">Dashboard</h1>
           <p className="text-sm text-muted-foreground">Monitor campaigns, agent runs, and outreach activity.</p>
         </div>
-        <Button asChild variant="outline">
-          <Link href="/campaigns">View Campaigns</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline">
+            <Link href="/runs">Open Runs</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/campaigns">View Campaigns</Link>
+          </Button>
+        </div>
       </div>
 
       <DashboardPipelineTrigger campaigns={data.campaignOptions} />
@@ -109,15 +100,19 @@ export default async function HomePage() {
           )}
         </CardContent>
       </Card>
-
-      <RunLogStream
-        logs={data.logs}
-        runId={data.observedRun?.id}
-        initialRunStatus={{
-          status: data.observedRun?.status ?? null,
-          currentStage: data.observedRun?.current_stage ?? null,
-        }}
-      />
+      <Card>
+        <CardHeader>
+          <CardTitle>Observability</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            Open the dedicated Runs page for live logs, event filters, and copy-friendly run IDs.
+          </p>
+          <Button asChild>
+            <Link href="/runs">Go to Runs</Link>
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

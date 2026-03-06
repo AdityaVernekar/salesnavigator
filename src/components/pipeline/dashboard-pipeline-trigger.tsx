@@ -84,7 +84,11 @@ export function DashboardPipelineTrigger({ campaigns }: { campaigns: CampaignOpt
         `Run queued for ${selectedCampaign?.name ?? "campaign"}${data.runId ? ` (run ${data.runId.slice(0, 8)}...)` : ""}. ${selectedStagesSummary}`,
       );
       setIsRunConfigOpen(false);
-      router.refresh();
+      if (data.runId) {
+        router.push(`/runs?runId=${data.runId}`);
+      } else {
+        router.refresh();
+      }
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "Failed to start pipeline run.");
     } finally {

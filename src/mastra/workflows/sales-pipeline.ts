@@ -56,11 +56,34 @@ function contactKey(value: { lead_id: string; linkedin_url: string | null; name:
   return null;
 }
 
-const pipelineInput = z.object({
+export const pipelineInput = z.object({
   campaignId: z.string().uuid(),
   runId: z.string().uuid(),
   selectedStages: z.array(z.enum(EXECUTABLE_PIPELINE_STAGES)).optional(),
   runConfig: pipelineRunConfigSchema.optional(),
+});
+
+export const leadGenerationOutputSchema = pipelineInput.extend({
+  leadsGenerated: z.number(),
+});
+export const peopleDiscoveryInputSchema = leadGenerationOutputSchema;
+export const peopleDiscoveryOutputSchema = peopleDiscoveryInputSchema.extend({
+  peopleDiscovered: z.number(),
+});
+export const enrichmentInputSchema = peopleDiscoveryOutputSchema;
+export const enrichmentOutputSchema = enrichmentInputSchema.extend({
+  leadsEnriched: z.number(),
+});
+export const scoringInputSchema = enrichmentOutputSchema;
+export const scoringOutputSchema = scoringInputSchema.extend({
+  leadsScored: z.number(),
+});
+export const emailInputSchema = scoringOutputSchema;
+export const fullPipelineOutputSchema = z.object({
+  leadsGenerated: z.number(),
+  leadsEnriched: z.number(),
+  leadsScored: z.number(),
+  emailsSent: z.number(),
 });
 
 function shouldRunStage(
@@ -69,6 +92,13 @@ function shouldRunStage(
 ) {
   if (!selectedStages?.length) return true;
   return selectedStages.includes(stage);
+}
+
+/** Lead IDs when running pipeline on selected leads only (Clay-style). */
+function getLeadIdsFilter(runConfig: { leadIds?: string[] } | undefined): string[] | undefined {
+  const ids = runConfig?.leadIds;
+  if (!ids?.length) return undefined;
+  return ids;
 }
 
 function takeWithLimit<T>(items: T[], limit?: number) {
@@ -149,10 +179,11 @@ function compactText(value: unknown, maxLength = 800) {
   return raw.replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
-const leadGenStep = createStep({
+export function buildLeadGenStep() {
+  return createStep({
   id: "lead-gen-step",
   inputSchema: pipelineInput,
-  outputSchema: pipelineInput.extend({ leadsGenerated: z.number() }),
+  outputSchema: leadGenerationOutputSchema,
   execute: async ({ inputData }) => {
     const stage = "lead_generation";
     const startedAt = Date.now();
@@ -199,7 +230,9 @@ const leadGenStep = createStep({
       await updateRunState(inputData.runId, { config_version_id: leadGenRuntime.config.configVersionId });
       const result = await withRetries(async () => {
         const stream = await leadGenRuntime.agent.stream(
-          `Generate up to ${remainingSlots} leads for this campaign ICP: ${campaign?.icp_description ?? ""}`,
+          leadGenRuntime.preparePrompt(
+            `Generate up to ${remainingSlots} leads for this campaign ICP: ${campaign?.icp_description ?? ""}`,
+          ),
           { structuredOutput: { schema: leadsOutputSchema }, maxSteps: 8 },
         );
         await consumeAgentStream(stream, inputData.runId, "lead_gen");
@@ -261,12 +294,14 @@ const leadGenStep = createStep({
       throw error;
     }
   },
-});
+  });
+}
 
-const peopleGenStep = createStep({
+export function buildPeopleGenStep() {
+  return createStep({
   id: "people-gen-step",
-  inputSchema: pipelineInput.extend({ leadsGenerated: z.number() }),
-  outputSchema: pipelineInput.extend({ leadsGenerated: z.number(), peopleDiscovered: z.number() }),
+  inputSchema: peopleDiscoveryInputSchema,
+  outputSchema: peopleDiscoveryOutputSchema,
   execute: async ({ inputData }) => {
     const stage = "people_discovery";
     const startedAt = Date.now();
@@ -289,11 +324,16 @@ const peopleGenStep = createStep({
         .eq("id", inputData.campaignId)
         .single();
 
-      const { data: leads } = await supabaseServer
+      const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
+      let leadsQuery = supabaseServer
         .from("leads")
         .select("id,company_name,company_domain,linkedin_url,exa_url,raw_data,status")
         .eq("campaign_id", inputData.campaignId)
         .in("status", ["new", "enriching"]);
+      if (leadIdsFilter?.length) {
+        leadsQuery = leadsQuery.in("id", leadIdsFilter);
+      }
+      const { data: leads } = await leadsQuery;
 
       if (!leads?.length) {
         await logRunEvent(inputData.runId, "people_gen", "success", "No company leads available for people discovery", {
@@ -320,11 +360,13 @@ const peopleGenStep = createStep({
       await updateRunState(inputData.runId, { config_version_id: peopleGenRuntime.config.configVersionId });
       const result = await withRetries(async () => {
         const stream = await peopleGenRuntime.agent.stream(
-          [
-            `Campaign ICP: ${campaign?.icp_description ?? ""}`,
-            `Target roles: ${(campaign?.target_roles ?? []).join(", ")}`,
-            `Find contacts in these companies: ${JSON.stringify(leads)}`,
-          ].join("\n"),
+          peopleGenRuntime.preparePrompt(
+            [
+              `Campaign ICP: ${campaign?.icp_description ?? ""}`,
+              `Target roles: ${(campaign?.target_roles ?? []).join(", ")}`,
+              `Find contacts in these companies: ${JSON.stringify(leads)}`,
+            ].join("\n"),
+          ),
           { structuredOutput: { schema: peopleOutputSchema }, maxSteps: 10 },
         );
         await consumeAgentStream(stream, inputData.runId, "people_gen");
@@ -397,12 +439,14 @@ const peopleGenStep = createStep({
       throw error;
     }
   },
-});
+  });
+}
 
-const enrichmentStep = createStep({
+export function buildEnrichmentStep() {
+  return createStep({
   id: "enrichment-step",
-  inputSchema: pipelineInput.extend({ leadsGenerated: z.number(), peopleDiscovered: z.number() }),
-  outputSchema: pipelineInput.extend({ leadsGenerated: z.number(), peopleDiscovered: z.number(), leadsEnriched: z.number() }),
+  inputSchema: enrichmentInputSchema,
+  outputSchema: enrichmentOutputSchema,
   execute: async ({ inputData }) => {
     const stage = "enrichment";
     const startedAt = Date.now();
@@ -419,27 +463,40 @@ const enrichmentStep = createStep({
     });
 
     try {
-      const { data: contactsToEnrich } = await supabaseServer
+      const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
+      let contactsToEnrichQuery = supabaseServer
         .from("contacts")
         .select("id,lead_id,name,first_name,linkedin_url,headline,company_name")
         .eq("campaign_id", inputData.campaignId)
         .is("enriched_at", null);
+      if (leadIdsFilter?.length) {
+        contactsToEnrichQuery = contactsToEnrichQuery.in("lead_id", leadIdsFilter);
+      }
+      const { data: contactsToEnrich } = await contactsToEnrichQuery;
       const maxContacts = inputData.runConfig?.enrichment?.maxContacts;
       const limitedContactsToEnrich = takeWithLimit(contactsToEnrich ?? [], maxContacts);
 
       if (!limitedContactsToEnrich.length) {
-        const { data: leadsWithUnenrichedContacts } = await supabaseServer
+        let unenrichedQuery = supabaseServer
           .from("contacts")
           .select("lead_id")
           .eq("campaign_id", inputData.campaignId)
           .is("enriched_at", null);
+        if (leadIdsFilter?.length) {
+          unenrichedQuery = unenrichedQuery.in("lead_id", leadIdsFilter);
+        }
+        const { data: leadsWithUnenrichedContacts } = await unenrichedQuery;
         const blockedLeadIds = new Set((leadsWithUnenrichedContacts ?? []).map((contact) => contact.lead_id));
 
-        const { data: candidateLeads } = await supabaseServer
+        let candidateLeadsQuery = supabaseServer
           .from("leads")
           .select("id")
           .eq("campaign_id", inputData.campaignId)
           .eq("status", "enriching");
+        if (leadIdsFilter?.length) {
+          candidateLeadsQuery = candidateLeadsQuery.in("id", leadIdsFilter);
+        }
+        const { data: candidateLeads } = await candidateLeadsQuery;
         const leadsReadyForEnriched = (candidateLeads ?? [])
           .map((lead) => lead.id)
           .filter((leadId) => !blockedLeadIds.has(leadId));
@@ -464,7 +521,9 @@ const enrichmentStep = createStep({
       await updateRunState(inputData.runId, { config_version_id: enrichmentRuntime.config.configVersionId });
       const result = await withRetries(async () => {
         const stream = await enrichmentRuntime.agent.stream(
-          `Enrich these people candidates: ${JSON.stringify(limitedContactsToEnrich)}`,
+          enrichmentRuntime.preparePrompt(
+            `Enrich these people candidates: ${JSON.stringify(limitedContactsToEnrich)}`,
+          ),
           {
             structuredOutput: { schema: contactsOutputSchema },
             maxSteps: 8,
@@ -568,17 +627,14 @@ const enrichmentStep = createStep({
       throw error;
     }
   },
-});
+  });
+}
 
-const scoringStep = createStep({
+export function buildScoringStep() {
+  return createStep({
   id: "scoring-step",
-  inputSchema: pipelineInput.extend({ leadsGenerated: z.number(), peopleDiscovered: z.number(), leadsEnriched: z.number() }),
-  outputSchema: pipelineInput.extend({
-    leadsGenerated: z.number(),
-    peopleDiscovered: z.number(),
-    leadsEnriched: z.number(),
-    leadsScored: z.number(),
-  }),
+  inputSchema: scoringInputSchema,
+  outputSchema: scoringOutputSchema,
   execute: async ({ inputData }) => {
     const stage = "scoring";
     const startedAt = Date.now();
@@ -595,11 +651,16 @@ const scoringStep = createStep({
     });
 
     try {
-      const { data: contacts } = await supabaseServer
+      const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
+      let contactsQuery = supabaseServer
         .from("contacts")
         .select("id,lead_id,name,email,email_verified,headline,company_name,contact_brief,exa_company_signals")
         .eq("campaign_id", inputData.campaignId)
         .not("enriched_at", "is", null);
+      if (leadIdsFilter?.length) {
+        contactsQuery = contactsQuery.in("lead_id", leadIdsFilter);
+      }
+      const { data: contacts } = await contactsQuery;
 
       if (!contacts?.length) {
         await updateRunState(inputData.runId, { leads_scored: 0 });
@@ -642,7 +703,9 @@ const scoringStep = createStep({
       await updateRunState(inputData.runId, { config_version_id: scoringRuntime.config.configVersionId });
       const result = await withRetries(async () => {
         const stream = await scoringRuntime.agent.stream(
-          `Score contacts with this rubric:\n${campaign?.scoring_rubric ?? ""}\nData:${JSON.stringify(limitedContactsToScore)}`,
+          scoringRuntime.preparePrompt(
+            `Score contacts with this rubric:\n${campaign?.scoring_rubric ?? ""}\nData:${JSON.stringify(limitedContactsToScore)}`,
+          ),
           { structuredOutput: { schema: scoresOutputSchema }, maxSteps: 8 },
         );
         await consumeAgentStream(stream, inputData.runId, "scoring");
@@ -710,16 +773,13 @@ const scoringStep = createStep({
       throw error;
     }
   },
-});
+  });
+}
 
-const emailStep = createStep({
+export function buildEmailStep() {
+  return createStep({
   id: "email-step",
-  inputSchema: pipelineInput.extend({
-    leadsGenerated: z.number(),
-    peopleDiscovered: z.number(),
-    leadsEnriched: z.number(),
-    leadsScored: z.number(),
-  }),
+  inputSchema: emailInputSchema,
   outputSchema: z.object({
     leadsGenerated: z.number(),
     leadsEnriched: z.number(),
@@ -790,6 +850,7 @@ const emailStep = createStep({
         });
       }
 
+      const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
       const { data: hotOrWarmScores } = await supabaseServer
         .from("icp_scores")
         .select("contact_id,tier,recommended_angle")
@@ -797,7 +858,19 @@ const emailStep = createStep({
         .eq("next_action", "email")
         .in("tier", ["hot", "warm"]);
 
-      if (!hotOrWarmScores?.length) {
+      let scoresToUse = hotOrWarmScores ?? [];
+      if (leadIdsFilter?.length && scoresToUse.length) {
+        const contactIds = [...new Set(scoresToUse.map((s) => s.contact_id))];
+        const { data: contactsForLeads } = await supabaseServer
+          .from("contacts")
+          .select("id,lead_id")
+          .in("id", contactIds)
+          .in("lead_id", leadIdsFilter);
+        const allowedContactIds = new Set((contactsForLeads ?? []).map((c) => c.id));
+        scoresToUse = scoresToUse.filter((s) => allowedContactIds.has(s.contact_id));
+      }
+
+      if (!scoresToUse.length) {
         await updateRunState(inputData.runId, { emails_sent: 0 });
         await logRunEvent(inputData.runId, "cold_email", "success", "No contacts ready for email", {
           campaignId: inputData.campaignId,
@@ -811,8 +884,8 @@ const emailStep = createStep({
         };
       }
 
-      const scoreByContact = new Map(hotOrWarmScores.map((item) => [item.contact_id, item]));
-      const contactIds = hotOrWarmScores.map((item) => item.contact_id);
+      const scoreByContact = new Map(scoresToUse.map((item) => [item.contact_id, item]));
+      const contactIds = scoresToUse.map((item) => item.contact_id);
       const { data: contacts } = await supabaseServer
         .from("contacts")
         .select(
@@ -832,7 +905,42 @@ const emailStep = createStep({
         });
       }
       const sendCap = inputData.runConfig?.email?.maxSends ?? (campaign?.daily_send_limit ?? 50);
-      const limitedContacts = sendableContacts.slice(0, sendCap);
+      const candidateContactIds = sendableContacts.map((contact) => contact.id);
+      const { data: previouslySentRows } = candidateContactIds.length
+        ? await supabaseServer
+            .from("emails_sent")
+            .select("contact_id")
+            .eq("campaign_id", inputData.campaignId)
+            .eq("step_number", 1)
+            .eq("is_test_send", false)
+            .in("contact_id", candidateContactIds)
+        : { data: [] as Array<{ contact_id: string }> };
+      const previouslySentContactIds = new Set((previouslySentRows ?? []).map((row) => row.contact_id));
+      const unsentContacts = sendableContacts.filter((contact) => !previouslySentContactIds.has(contact.id));
+      const skippedForDuplicate = sendableContacts.length - unsentContacts.length;
+      if (skippedForDuplicate > 0) {
+        await logRunEvent(inputData.runId, "cold_email", "info", "Skipped contacts already emailed in this campaign", {
+          skippedForDuplicate,
+          dedupeScope: "campaign_id + contact_id + step_number=1 + is_test_send=false",
+        });
+      }
+      const limitedContacts = unsentContacts.slice(0, sendCap);
+      if (!limitedContacts.length) {
+        await updateRunState(inputData.runId, { emails_sent: 0 });
+        await logRunEvent(inputData.runId, "cold_email", "success", "No unsent contacts available for email", {
+          campaignId: inputData.campaignId,
+          sendCap,
+          skippedForEligibility,
+          skippedForDuplicate,
+          durationMs: Date.now() - startedAt,
+        });
+        return {
+          leadsGenerated: inputData.leadsGenerated,
+          leadsEnriched: inputData.leadsEnriched,
+          leadsScored: inputData.leadsScored,
+          emailsSent: 0,
+        };
+      }
       const leadIds = Array.from(new Set(limitedContacts.map((contact) => contact.lead_id).filter(Boolean)));
       const { data: leadRows } = leadIds.length
         ? await supabaseServer
@@ -865,6 +973,9 @@ const emailStep = createStep({
         string,
         { id: string; subject_template: string; body_template: string; prompt_context: string | null }
       >();
+      const priorityTiers = new Set(["hot", "warm"]);
+      let routedToPriorityPath = 0;
+      let routedToTemplatePath = 0;
       const sent: Array<{
         contactId: string;
         leadId: string;
@@ -928,9 +1039,11 @@ const emailStep = createStep({
 
         let subject = fallbackSubject;
         let finalBodyText = fallbackBodyText;
-        let personalizationSource: "agent_prompt" | "template_fallback" = "template_fallback";
+        let personalizationSource: "agent_prompt" | "template_fallback" | "template_bulk_policy" = "template_fallback";
+        const scoreTier = String(scoreByContact.get(contact.id)?.tier ?? "").toLowerCase();
+        const usePriorityPersonalizationPath = priorityTiers.has(scoreTier);
 
-        if (coldEmailRuntime) {
+        if (coldEmailRuntime && usePriorityPersonalizationPath) {
           try {
             const leadContext = leadById.get(String(contact.lead_id));
             const score = scoreByContact.get(contact.id);
@@ -969,7 +1082,7 @@ const emailStep = createStep({
               `template_prompt_context: ${compactText(templateContext?.prompt_context, 1200)}`,
             ].join("\n");
 
-            const draftStream = await coldEmailRuntime.agent.stream(personalizationPrompt, {
+            const draftStream = await coldEmailRuntime.agent.stream(coldEmailRuntime.preparePrompt(personalizationPrompt), {
               structuredOutput: { schema: personalizedEmailDraftSchema },
               maxSteps: 6,
             });
@@ -981,13 +1094,20 @@ const emailStep = createStep({
               subject = draftedSubject;
               finalBodyText = draftedBody;
               personalizationSource = "agent_prompt";
+              routedToPriorityPath += 1;
             }
           } catch (personalizationError) {
             await logRunEvent(inputData.runId, "cold_email", "warn", "Prompt personalization failed; using template fallback", {
               contactId: contact.id,
               error: personalizationError instanceof Error ? personalizationError.message : String(personalizationError),
             });
+            routedToTemplatePath += 1;
           }
+        } else if (!usePriorityPersonalizationPath) {
+          personalizationSource = "template_bulk_policy";
+          routedToTemplatePath += 1;
+        } else {
+          routedToTemplatePath += 1;
         }
 
         const deliveryTargets = testModeEnabled
@@ -1107,6 +1227,9 @@ const emailStep = createStep({
         selectedTemplateVersionIds: Array.from(new Set(selectedTemplateVersionIds)),
         experimentId: activeExperiment?.id ?? null,
         renderMode: "text/plain",
+        priorityTiers: Array.from(priorityTiers),
+        routedToPriorityPath,
+        routedToTemplatePath,
         testModeEnabled,
         testRecipientEmails,
         durationMs: Date.now() - startedAt,
@@ -1127,17 +1250,19 @@ const emailStep = createStep({
       throw error;
     }
   },
-});
+  });
+}
+
+const leadGenStep = buildLeadGenStep();
+const peopleGenStep = buildPeopleGenStep();
+const enrichmentStep = buildEnrichmentStep();
+const scoringStep = buildScoringStep();
+const emailStep = buildEmailStep();
 
 export const salesPipelineWorkflow = createWorkflow({
   id: "sales-pipeline-workflow",
   inputSchema: pipelineInput,
-  outputSchema: z.object({
-    leadsGenerated: z.number(),
-    leadsEnriched: z.number(),
-    leadsScored: z.number(),
-    emailsSent: z.number(),
-  }),
+  outputSchema: fullPipelineOutputSchema,
 })
   .then(leadGenStep)
   .then(peopleGenStep)

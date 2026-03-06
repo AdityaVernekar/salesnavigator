@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.worker.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "baseUrl": "../../",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "../../src/**/*.ts", "../../src/**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+

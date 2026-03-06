@@ -55,6 +55,7 @@ export function RunLogStream({
   });
   const [streamMode, setStreamMode] = useState<"sse" | "supabase" | "snapshot">("snapshot");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [eventFilter, setEventFilter] = useState<"all" | "agent_events" | "tool_calls" | "errors">("all");
 
   useEffect(() => {
     setRealtimeLogs(logs);
@@ -228,6 +229,25 @@ export function RunLogStream({
     return JSON.stringify(metadata, null, 2);
   };
 
+  const filteredLogs = useMemo(() => {
+    if (eventFilter === "all") return realtimeLogs;
+    if (eventFilter === "errors") {
+      return realtimeLogs.filter((log) => log.level === "error");
+    }
+    if (eventFilter === "tool_calls") {
+      return realtimeLogs.filter((log) => {
+        const toolName = log.metadata?.toolName;
+        if (toolName) return true;
+        return log.message.startsWith("Tool call:") || log.message.startsWith("Tool result:");
+      });
+    }
+    return realtimeLogs.filter((log) => {
+      const eventType = log.metadata?.eventType;
+      if (eventType) return true;
+      return log.message.startsWith("Stage worker event:") || log.message.includes("Agent stream");
+    });
+  }, [eventFilter, realtimeLogs]);
+
   return (
     <Card>
       <CardHeader>
@@ -248,11 +268,38 @@ export function RunLogStream({
             </div>
           </div>
         ) : null}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Button size="sm" variant={eventFilter === "all" ? "default" : "outline"} onClick={() => setEventFilter("all")}>
+            All
+          </Button>
+          <Button
+            size="sm"
+            variant={eventFilter === "agent_events" ? "default" : "outline"}
+            onClick={() => setEventFilter("agent_events")}
+          >
+            Agent events
+          </Button>
+          <Button
+            size="sm"
+            variant={eventFilter === "tool_calls" ? "default" : "outline"}
+            onClick={() => setEventFilter("tool_calls")}
+          >
+            Tool calls
+          </Button>
+          <Button
+            size="sm"
+            variant={eventFilter === "errors" ? "default" : "outline"}
+            onClick={() => setEventFilter("errors")}
+          >
+            Errors
+          </Button>
+          <span className="text-xs text-muted-foreground">Showing {filteredLogs.length} events</span>
+        </div>
         <div className="space-y-2">
-          {realtimeLogs.length === 0 ? (
+          {filteredLogs.length === 0 ? (
             <p className="text-sm text-muted-foreground">No logs yet.</p>
           ) : (
-            realtimeLogs.map((log) => (
+            filteredLogs.map((log) => (
               <div key={log.id} className="rounded border p-2 text-sm">
                 <div className="mb-1 flex flex-wrap items-center gap-2">
                   <Badge variant="outline">{log.agent_type ?? "pipeline"}</Badge>

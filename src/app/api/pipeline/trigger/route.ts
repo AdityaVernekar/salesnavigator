@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { env } from "@/lib/config/env";
-import { enqueuePipelineJob, getPipelineQueueDepth } from "@/lib/pipeline/queue";
+import { enqueuePipelineJob, getPipelineQueueDepth, getSendQueueDepth, getStageQueueDepth } from "@/lib/pipeline/queue";
 import { EXECUTABLE_PIPELINE_STAGES, expandStageRange } from "@/lib/pipeline/stages";
 import { normalizeRunConfig, pipelineRunConfigSchema } from "@/lib/pipeline/run-config";
 import { logRunEvent, updateRunState } from "@/lib/pipeline/run-state";
 import { supabaseServer } from "@/lib/supabase/server";
+import { getQueueAndWorkerMetrics } from "@/lib/pipeline/metrics";
+import { getDynamicWorkerCapacity } from "@/lib/pipeline/capacity-policy";
 
 const triggerSchema = z.object({
   campaignId: z.string().uuid(),
@@ -76,41 +78,76 @@ export async function POST(request: NextRequest) {
     });
 
     // Best-effort kick for local/dev and low-throughput setups.
+    // When service-owned execution is enabled, the trigger route stays advisory-only.
     void (async () => {
-      const workerKickUrl = `${env.NEXT_PUBLIC_APP_URL}/api/cron/pipeline-worker?maxJobs=3&concurrency=2`;
       try {
+        if (env.WORKER_EXECUTION_OWNER === "service") {
+          await logRunEvent(run.id, "worker", "info", "Skipping app-owned worker kicks (service owner enabled)", {
+            owner: env.WORKER_EXECUTION_OWNER,
+            queueDepth,
+          });
+          return;
+        }
+        const metrics = await getQueueAndWorkerMetrics();
+        const targets = getDynamicWorkerCapacity(metrics);
+        const workerKickUrl = `${env.NEXT_PUBLIC_APP_URL}/api/cron/pipeline-worker?maxJobs=${targets.pipeline.maxJobs}&concurrency=${targets.pipeline.concurrency}`;
+        const stageWorkerKickUrl = `${env.NEXT_PUBLIC_APP_URL}/api/cron/stage-worker?maxJobs=${targets.stage.maxJobs}&concurrency=${targets.stage.concurrency}`;
+        const sendWorkerKickUrl = `${env.NEXT_PUBLIC_APP_URL}/api/cron/send-worker?maxJobs=${targets.send.maxJobs}&concurrency=${targets.send.concurrency}`;
         await logRunEvent(run.id, "worker", "info", "Attempting best-effort worker kick", {
           workerKickUrl,
+          stageWorkerKickUrl,
+          sendWorkerKickUrl,
+          targets,
+          metrics,
           hasCronSecret: Boolean(env.CRON_SECRET),
         });
-        const response = await fetch(workerKickUrl, {
-          method: "POST",
-          headers: {
-            "x-cron-secret": env.CRON_SECRET,
-          },
-        });
-        let payload: unknown = null;
-        try {
-          payload = await response.json();
-        } catch {
-          payload = null;
-        }
+        const kick = async (url: string) => {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "x-cron-secret": env.CRON_SECRET },
+          });
+          let payload: unknown = null;
+          try {
+            payload = await response.json();
+          } catch {
+            payload = null;
+          }
+          return {
+            url,
+            status: response.status,
+            statusText: response.statusText,
+            ok: response.ok,
+            payload,
+          };
+        };
+        const pipelineKick = await kick(workerKickUrl);
+        const stageKick = pipelineKick.ok
+          ? await kick(stageWorkerKickUrl)
+          : {
+              url: stageWorkerKickUrl,
+              status: 424,
+              statusText: "Skipped: pipeline kick failed",
+              ok: false,
+              payload: { ok: false, skipped: true, reason: "pipeline_kick_failed" },
+            };
+        const sendKick = await kick(sendWorkerKickUrl);
+        const allOk = pipelineKick.ok && stageKick.ok && sendKick.ok;
 
         await logRunEvent(
           run.id,
           "worker",
-          response.ok ? "info" : "warn",
-          response.ok ? "Best-effort worker kick completed" : "Best-effort worker kick returned non-OK response",
+          allOk ? "info" : "warn",
+          allOk ? "Best-effort worker kicks completed" : "One or more best-effort worker kicks returned non-OK",
           {
-            workerKickUrl,
-            status: response.status,
-            statusText: response.statusText,
-            payload,
+            kicks: [pipelineKick, stageKick, sendKick],
+            sequence: ["pipeline", "stage", "send"],
+            queueDepth,
+            stageQueueDepth: await getStageQueueDepth(),
+            sendQueueDepth: await getSendQueueDepth(),
           },
         );
       } catch (kickError) {
         await logRunEvent(run.id, "worker", "warn", "Best-effort worker kick request failed", {
-          workerKickUrl,
           error: kickError instanceof Error ? kickError.message : String(kickError),
         });
       }

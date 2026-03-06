@@ -51,7 +51,11 @@ export function RunPipelineButton({
         `Pipeline queued successfully${data.runId ? ` (run ${data.runId.slice(0, 8)}...)` : ""}.`,
       );
       setIsRunConfigOpen(false);
-      router.refresh();
+      if (data.runId) {
+        router.push(`/runs?runId=${data.runId}`);
+      } else {
+        router.refresh();
+      }
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "Failed to trigger pipeline run.");
     } finally {

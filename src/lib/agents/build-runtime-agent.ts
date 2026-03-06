@@ -1,6 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import { resolveAgentRuntimeConfig } from "@/lib/agents/runtime-config";
-import type { ManagedAgentType, ResolvedRuntimeConfig } from "@/lib/agents/runtime-types";
+import type { ManagedAgentType, ResolvedRuntimeConfig, RuntimeGuardrails } from "@/lib/agents/runtime-types";
 import { agentToolAllowlist, resolveRuntimeTools } from "@/lib/agents/tool-registry";
 
 const agentMeta: Record<ManagedAgentType, { id: string; name: string; description: string }> = {
@@ -41,21 +41,67 @@ export type RuntimeAgentResolution = {
   config: ResolvedRuntimeConfig;
   toolKeys: string[];
   rejectedToolKeys: string[];
+  preparePrompt: (prompt: string) => string;
 };
 
-export async function buildRuntimeAgent(agentType: ManagedAgentType): Promise<RuntimeAgentResolution> {
+export type BuildRuntimeAgentOptions = {
+  requestedToolKeys?: string[];
+};
+
+function buildGuardrailInstruction(guardrails: RuntimeGuardrails) {
+  const lines: string[] = [];
+  if (guardrails.prependInstructions.length) {
+    lines.push("Always follow these runtime guardrails:");
+    for (const item of guardrails.prependInstructions) {
+      lines.push(`- ${item}`);
+    }
+  }
+  if (guardrails.blockedPatterns.length) {
+    lines.push("Never include or process these blocked patterns:");
+    for (const item of guardrails.blockedPatterns) {
+      lines.push(`- ${item}`);
+    }
+  }
+  if (guardrails.maxPromptChars) {
+    lines.push(`Reject prompts exceeding ${guardrails.maxPromptChars} characters.`);
+  }
+  return lines.length ? `\n\n${lines.join("\n")}` : "";
+}
+
+function enforcePromptGuardrails(prompt: string, guardrails: RuntimeGuardrails) {
+  const normalized = String(prompt ?? "");
+  if (guardrails.maxPromptChars && normalized.length > guardrails.maxPromptChars) {
+    throw new Error(`Prompt exceeds guardrail maxPromptChars (${guardrails.maxPromptChars})`);
+  }
+  const lowered = normalized.toLowerCase();
+  for (const blocked of guardrails.blockedPatterns) {
+    if (lowered.includes(blocked.toLowerCase())) {
+      throw new Error(`Prompt blocked by guardrail pattern: ${blocked}`);
+    }
+  }
+  return normalized;
+}
+
+export async function buildRuntimeAgent(
+  agentType: ManagedAgentType,
+  options?: BuildRuntimeAgentOptions,
+): Promise<RuntimeAgentResolution> {
   const resolvedConfig = await resolveAgentRuntimeConfig(agentType);
 
   if (resolvedConfig.source === "static" || !resolvedConfig.instructions.trim().length) {
     throw new Error(`Missing active DB runtime config for agent type: ${agentType}`);
   }
 
-  const requestedTools = resolvedConfig.enabledToolKeys.length
-    ? resolvedConfig.enabledToolKeys
-    : (agentToolAllowlist[agentType] ?? []);
+  const requestedTools = options?.requestedToolKeys?.length
+    ? options.requestedToolKeys
+    : resolvedConfig.enabledToolKeys.length
+      ? resolvedConfig.enabledToolKeys
+      : (agentToolAllowlist[agentType] ?? []);
 
   const { tools, enabledToolKeys, rejectedToolKeys } = await resolveRuntimeTools(agentType, requestedTools);
   const meta = agentMeta[agentType];
+  const guardrailInstruction = buildGuardrailInstruction(resolvedConfig.guardrails);
+  const instructions = `${resolvedConfig.instructions}${guardrailInstruction}`.trim();
 
   const runtimeAgent = new Agent({
     id: meta.id,
@@ -63,7 +109,7 @@ export async function buildRuntimeAgent(agentType: ManagedAgentType): Promise<Ru
     description: meta.description,
     model: resolvedConfig.model,
     tools: tools as Record<string, never>,
-    instructions: resolvedConfig.instructions,
+    instructions,
   });
 
   return {
@@ -71,5 +117,6 @@ export async function buildRuntimeAgent(agentType: ManagedAgentType): Promise<Ru
     config: resolvedConfig,
     toolKeys: enabledToolKeys,
     rejectedToolKeys: [...resolvedConfig.rejectedToolKeys, ...rejectedToolKeys],
+    preparePrompt: (prompt: string) => enforcePromptGuardrails(prompt, resolvedConfig.guardrails),
   };
 }
