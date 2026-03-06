@@ -20,7 +20,7 @@
 10. [Campaign System](#10-campaign-system)
 11. [API Routes](#11-api-routes)
 12. [UI Pages & Components](#12-ui-pages--components)
-13. [Cron Jobs — Cloudflare Workers](#13-cron-jobs--cloudflare-workers)
+13. [Worker Scheduling](#13-worker-scheduling)
 14. [Project Structure](#14-project-structure)
 15. [Environment Variables](#15-environment-variables)
 16. [Build Phases](#16-build-phases)
@@ -132,7 +132,7 @@ followUpWorkflow (separate, runs on cron)
 | **Gmail Integration** | Composio (`@composio/core`) | OAuth for multiple Gmail accounts, send/read/label — no raw `googleapis` wrangling |
 | **UI Components** | shadcn/ui + Tailwind CSS v4 | Ship fast, looks good, accessible |
 | **Data Fetching** | TanStack Query | Server state sync, caching, optimistic updates |
-| **Cron Scheduling** | Cloudflare Workers (free tier) | Reliable cron triggers, calls Next.js API routes as webhooks |
+| **Cron Scheduling** | Dedicated backend worker service + optional external scheduler | Service-owned execution with cron endpoints available for manual/emergency triggers |
 | **Queue (Phase 2)** | Upstash Redis + BullMQ | Retries, concurrency limits, dead-letter queues for production scale |
 | **Encryption** | `node:crypto` AES-256-GCM | OAuth tokens encrypted at rest in Supabase |
 
@@ -166,18 +166,18 @@ followUpWorkflow (separate, runs on cron)
                 │                          │
                 ▼                          ▼
 ┌───────────────────────────┐  ┌──────────────────────────────┐
-│   Supabase (Postgres)      │  │   Cloudflare Workers          │
+│   Supabase (Postgres)      │  │ Dedicated Worker Backend      │
 │                            │  │                               │
-│   • leads                  │  │   worker-lead-gen     (cron)  │
-│   • contacts               │  │   worker-followup    (cron)  │
-│   • icp_scores             │  │   worker-warmup      (cron)  │
-│   • campaigns              │  │   worker-reset-sends (cron)  │
-│   • email_accounts         │  │   worker-sequence    (cron)  │
-│   • emails_sent            │  │                               │
-│   • enrollments            │  │   Each worker just POSTs to   │
-│   • agent_configs          │  │   /api/cron/* with a secret   │
-│   • pipeline_runs          │  │   header — all logic stays    │
-│   • run_logs               │  │   in Next.js                  │
+│   • leads                  │  │ `npm run worker:nest`         │
+│   • contacts               │  │ polls queue + executes jobs   │
+│   • icp_scores             │  │                               │
+│   • campaigns              │  │ Optional external scheduler    │
+│   • email_accounts         │  │ can hit `/api/cron/*` with    │
+│   • emails_sent            │  │ `x-cron-secret` for fallback  │
+│   • enrollments            │  │                               │
+│   • agent_configs          │  │ Ownership switch:             │
+│   • pipeline_runs          │  │ `WORKER_EXECUTION_OWNER`      │
+│   • run_logs               │  │ = `service | app`             │
 │   • suppressions           │  └──────────────────────────────┘
 │   • warmup_logs            │
 └───────────────────────────┘
@@ -1487,42 +1487,21 @@ The scoring agent's output is displayed in a rich table:
 
 ---
 
-## 13. Cron Jobs — Cloudflare Workers
+## 13. Worker Scheduling
 
-All workers follow the same pattern: call a Next.js API route with a secret header.
+Primary execution runs in the dedicated backend worker service. Cron routes remain available for manual or emergency triggers with `x-cron-secret`.
 
-| Worker | Cron Schedule | Target Route | Purpose |
+| Job | Suggested Schedule | Target Route | Purpose |
 |---|---|---|---|
-| `worker-lead-gen` | `0 9 * * 1-5` (9am weekdays) | `/api/cron/lead-gen` | Run lead gen for active campaigns |
-| `worker-followup` | `*/15 * * * *` (every 15 min) | `/api/cron/followup` | Check replies + send due follow-ups |
-| `worker-sequence` | `*/30 * * * *` (every 30 min) | `/api/cron/sequence-step` | Send due sequence steps |
-| `worker-warmup` | `0 * * * *` (every hour) | `/api/cron/warmup` | Run warmup email cycle |
-| `worker-reset-sends` | `0 0 * * *` (midnight UTC) | `/api/cron/reset-sends` | Reset daily send counters |
+| `lead-gen` | `0 9 * * 1-5` (9am weekdays) | `/api/cron/lead-gen` | Run lead gen for active campaigns |
+| `followup` | `*/15 * * * *` (every 15 min) | `/api/cron/followup` | Check replies + send due follow-ups |
+| `sequence` | `*/30 * * * *` (every 30 min) | `/api/cron/sequence-step` | Send due sequence steps |
+| `warmup` | `0 * * * *` (every hour) | `/api/cron/warmup` | Run warmup email cycle |
+| `reset-sends` | `0 0 * * *` (midnight UTC) | `/api/cron/reset-sends` | Reset daily send counters |
 
-**Worker Template:**
-```typescript
-// cloudflare-workers/worker-lead-gen.ts
-export interface Env {
-  APP_URL: string;
-  CRON_SECRET: string;
-}
-
-export default {
-  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
-    await fetch(`${env.APP_URL}/api/cron/lead-gen`, {
-      method: "POST",
-      headers: { "x-cron-secret": env.CRON_SECRET },
-    });
-  },
-  async fetch(req: Request, env: Env): Promise<Response> {
-    if (req.method === "POST" && req.headers.get("x-cron-secret") === env.CRON_SECRET) {
-      await this.scheduled({} as ScheduledEvent, env, {} as ExecutionContext);
-      return new Response(JSON.stringify({ triggered: true }));
-    }
-    return new Response("SalesNav Worker", { status: 200 });
-  },
-};
-```
+Use:
+- `WORKER_EXECUTION_OWNER=service` for production ownership.
+- `WORKER_EXECUTION_OWNER=app` as emergency fallback.
 
 ---
 
@@ -1643,14 +1622,6 @@ salesnav/
 │       └── agents/
 │           └── agent-config-form.tsx         # System prompt + vars editor
 │
-├── cloudflare-workers/
-│   ├── wrangler.toml
-│   ├── worker-lead-gen.ts
-│   ├── worker-followup.ts
-│   ├── worker-warmup.ts
-│   ├── worker-reset-sends.ts
-│   └── worker-sequence.ts
-│
 ├── supabase/
 │   └── migrations/
 │       └── 001_init.sql                      # Full schema (exists, needs update)
@@ -1757,8 +1728,8 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 - [ ] `lib/warmup/engine.ts` + `lib/warmup/content.ts`
 - [ ] `/api/cron/*` — All cron endpoint handlers
-- [ ] Cloudflare Workers setup: `wrangler.toml` + 5 workers
-- [ ] Deploy workers, test cron triggers
+- [ ] Deploy dedicated worker backend service
+- [ ] Configure scheduler targets for `/api/cron/*` as needed
 - [ ] Warmup progress UI in `/settings`
 - [ ] Multi-account round-robin in email sending
 
@@ -1772,7 +1743,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 - [ ] CSV export
 - [ ] Suppression list management
 - [ ] End-to-end integration test with all 5 agents + warmup
-- [ ] Deploy to Vercel/Railway + Supabase + Cloudflare Workers
+- [ ] Deploy web + worker backend + Supabase
 
 ---
 
@@ -1785,7 +1756,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 | Gmail integration | Composio | Handles OAuth lifecycle, multi-account, pre-built tools |
 | Lead search | Exa + Clado | Exa for company signals, Clado for LinkedIn people search |
 | Database | Supabase Postgres | Free tier, realtime, built-in auth, easy migrations |
-| Crons | Cloudflare Workers | Free, reliable, no Vercel Pro required |
+| Crons | Dedicated backend worker service + optional external scheduler | Centralized execution ownership with simpler operations and rollback |
 | UI | shadcn/ui + Tailwind | Fast to build, great defaults, accessible |
 | Queue (Phase 2) | Upstash Redis + BullMQ | Serverless, retries, concurrency — add when scaling |
 | No LangChain | — | Python-first, 50+ deps, heavy abstraction not worth it for TypeScript project |

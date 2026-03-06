@@ -11,11 +11,12 @@
 - Run migration `supabase/migrations/001_init.sql`.
 - Set `SUPABASE_SERVICE_ROLE_KEY` in hosting environment.
 
-## Cron Triggers
+## Worker Scheduling
 
-- Deploy workers from `cloudflare-workers/`.
-- Each worker sends `POST` to `/api/cron/*` with `x-cron-secret`.
-- Use same `CRON_SECRET` in both app and workers.
+- Run the dedicated worker service with `npm run worker:nest`.
+- Set `WORKER_EXECUTION_OWNER=service` in production.
+- Keep app cron endpoints (`/api/cron/*`) available for manual or emergency operations only.
+- If an external scheduler is used, call cron routes with `x-cron-secret` and the same `CRON_SECRET`.
 
 ## Smoke Test
 

@@ -123,6 +123,25 @@ export async function claimStageJob(jobId: string, workerId: string, leaseSecond
   return data;
 }
 
+export async function extendStageJobLease(jobId: string, leaseSeconds = 120, workerId?: string) {
+  const leaseUntil = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+  let query = supabaseServer
+    .from("stage_jobs")
+    .update({
+      lease_expires_at: leaseUntil,
+      updated_at: nowIso(),
+    })
+    .eq("id", jobId)
+    .eq("status", "processing");
+  if (workerId) {
+    query = query.eq("worker_id", workerId);
+  }
+
+  const { data, error } = await query.select("id").maybeSingle();
+  if (error) throw new Error(`Failed to extend stage job lease: ${error.message}`);
+  return Boolean(data?.id);
+}
+
 export async function claimNextQueuedStageJob(workerId: string, leaseSeconds = 120) {
   const now = nowIso();
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -428,7 +447,7 @@ export async function countStuckSendJobs(options: Pick<ListStuckOptions, "runId"
 export async function recoverStuckStageJobs(options: ListStuckOptions = {}) {
   const stuck = await listStuckStageJobs(options);
   const ids = stuck.map((row) => row.id);
-  if (!ids.length) return { recoveredIds: [] as string[], enqueued: 0 };
+  if (!ids.length) return { recoveredIds: [] as string[], recoveredRunIds: [] as string[], enqueued: 0 };
 
   const { data: updated, error } = await supabaseServer
     .from("stage_jobs")
@@ -445,8 +464,16 @@ export async function recoverStuckStageJobs(options: ListStuckOptions = {}) {
   if (error) throw new Error(`Failed to recover stuck stage jobs: ${error.message}`);
 
   const recoveredIds = (updated ?? []).map((row) => String(row.id)).filter(Boolean);
+  const recoveredRunIds = Array.from(
+    new Set(
+      stuck
+        .filter((row) => recoveredIds.includes(String(row.id)))
+        .map((row) => String(row.run_id))
+        .filter(Boolean),
+    ),
+  );
   const enqueued = recoveredIds.length ? await enqueueStageJobIds(recoveredIds) : 0;
-  return { recoveredIds, enqueued };
+  return { recoveredIds, recoveredRunIds, enqueued };
 }
 
 export async function recoverStuckSendJobs(options: ListStuckOptions = {}) {
