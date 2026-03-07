@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 interface LeadContactRow {
   id: string;
@@ -10,13 +10,18 @@ interface LeadContactRow {
 }
 
 export async function GET(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
+
   const campaignId = request.nextUrl.searchParams.get("campaignId");
   const tier = request.nextUrl.searchParams.get("tier");
   const status = request.nextUrl.searchParams.get("status");
 
-  let query = supabaseServer
+  let query = supabase
     .from("leads")
     .select("id,campaign_id,status,company_name,company_domain,created_at")
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false });
   if (campaignId) query = query.eq("campaign_id", campaignId);
   if (status) query = query.eq("status", status);
@@ -26,9 +31,10 @@ export async function GET(request: NextRequest) {
   if (!leads?.length) return NextResponse.json({ ok: true, leads: [] });
 
   const leadIds = leads.map((lead) => lead.id);
-  const { data: contacts } = await supabaseServer
+  const { data: contacts } = await supabase
     .from("contacts")
     .select("id,lead_id,name,email,company_name,created_at")
+    .eq("company_id", companyId)
     .in("lead_id", leadIds)
     .order("created_at", { ascending: false });
 
@@ -41,9 +47,10 @@ export async function GET(request: NextRequest) {
 
   const contactIds = (contacts ?? []).map((contact) => contact.id);
   const { data: scores } = contactIds.length
-    ? await supabaseServer
+    ? await supabase
         .from("icp_scores")
         .select("contact_id,score,tier,next_action,scored_at")
+        .eq("company_id", companyId)
         .in("contact_id", contactIds)
     : { data: [] };
 

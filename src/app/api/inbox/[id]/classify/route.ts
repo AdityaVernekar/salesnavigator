@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 export async function POST(
   request: NextRequest,
@@ -7,10 +7,14 @@ export async function POST(
 ) {
   const { id } = await params;
   const { classification } = await request.json();
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
 
-  const { data, error } = await supabaseServer
+  const { data, error } = await supabase
     .from("emails_sent")
     .update({ classification })
+    .eq("company_id", companyId)
     .eq("id", id)
     .select("*")
     .single();

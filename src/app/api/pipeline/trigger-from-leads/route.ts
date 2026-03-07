@@ -8,6 +8,7 @@ import { logRunEvent, updateRunState } from "@/lib/pipeline/run-state";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getQueueAndWorkerMetrics } from "@/lib/pipeline/metrics";
 import { getDynamicWorkerCapacity } from "@/lib/pipeline/capacity-policy";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const triggerFromLeadsSchema = z.object({
   leadIds: z.array(z.string().uuid()).min(1).max(500),
@@ -19,6 +20,10 @@ const triggerFromLeadsSchema = z.object({
 export async function POST(request: NextRequest) {
   let runId: string | null = null;
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { companyId } = contextResult.context;
+
     const body = await request.json();
     const parsed = triggerFromLeadsSchema.parse(body);
     const selectedStages = expandStageRange(parsed.startStage, parsed.endStage);
@@ -30,6 +35,7 @@ export async function POST(request: NextRequest) {
     const { data: leads, error: leadsError } = await supabaseServer
       .from("leads")
       .select("id,campaign_id")
+      .eq("company_id", companyId)
       .in("id", parsed.leadIds);
 
     if (leadsError || !leads?.length) {
@@ -58,6 +64,7 @@ export async function POST(request: NextRequest) {
     const { data: run, error: runError } = await supabaseServer
       .from("pipeline_runs")
       .insert({
+        company_id: companyId,
         campaign_id: campaignId,
         trigger: "manual",
         status: "running",

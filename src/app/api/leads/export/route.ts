@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 interface CsvScoreRow {
   score: number | null;
@@ -21,9 +21,14 @@ function csvEscape(value: unknown) {
 }
 
 export async function GET() {
-  const { data, error } = await supabaseServer
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
+
+  const { data, error } = await supabase
     .from("icp_scores")
     .select("score,tier,reasoning,contacts(name,company_name,email)")
+    .eq("company_id", companyId)
     .order("scored_at", { ascending: false })
     .limit(1000);
 

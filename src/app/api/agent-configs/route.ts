@@ -9,6 +9,7 @@ import {
   normalizeAgentConfigType,
 } from "@/lib/agents/config-db";
 import { DEFAULT_LLM_MODEL } from "@/lib/ai/default-model";
+import { requireRouteContext } from "@/lib/auth/route-context";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const createVersionSchema = z.object({
@@ -38,9 +39,17 @@ const rollbackSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const typeParam = request.nextUrl.searchParams.get("type");
   if (!typeParam) {
-    const { data, error } = await supabaseServer.from("agent_configs").select("*").eq("is_active", true);
+    const { data, error } = await supabaseServer
+      .from("agent_configs")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("is_active", true);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, configs: data ?? [] });
   }
@@ -50,15 +59,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid agent type" }, { status: 400 });
   }
 
-  const config = await getConfigByType(type);
+  const config = await getConfigByType(type, companyId);
   if (!config) {
     return NextResponse.json({ ok: true, config: null, versions: [], tools: [] });
   }
-  const [versions, tools] = await Promise.all([getConfigVersions(config.id), listToolRegistry()]);
+  const [versions, tools] = await Promise.all([getConfigVersions(config.id, companyId), listToolRegistry(companyId)]);
   return NextResponse.json({ ok: true, config, versions, tools });
 }
 
 export async function POST(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const body = await request.json();
 
   if (body?.action === "activate") {
@@ -67,7 +80,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     }
     try {
-      await activateConfigVersion(parsed.data.configId, parsed.data.versionId);
+      await activateConfigVersion(parsed.data.configId, parsed.data.versionId, undefined, { companyId });
       return NextResponse.json({ ok: true });
     } catch (error) {
       return NextResponse.json(
@@ -83,11 +96,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     }
     try {
-      const versions = await getConfigVersions(parsed.data.configId);
+      const versions = await getConfigVersions(parsed.data.configId, companyId);
       if (versions.length < 2) {
         return NextResponse.json({ ok: false, error: "No previous version available to rollback" }, { status: 400 });
       }
-      await activateConfigVersion(parsed.data.configId, versions[1].id);
+      await activateConfigVersion(parsed.data.configId, versions[1].id, undefined, { companyId });
       return NextResponse.json({ ok: true, rolledBackToVersionId: versions[1].id });
     } catch (error) {
       return NextResponse.json(
@@ -109,6 +122,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const result = await createConfigVersion({
+      companyId,
       ...parsed.data,
       type: normalizedType,
     });
@@ -122,11 +136,16 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const body = await request.json();
   const { id, ...updates } = body;
   const { data, error } = await supabaseServer
     .from("agent_configs")
     .update(updates)
+    .eq("company_id", companyId)
     .eq("id", id)
     .select("*")
     .single();

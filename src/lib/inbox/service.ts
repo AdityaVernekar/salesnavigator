@@ -4,6 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 export type InboxView = "sent" | "replies";
 
 export type InboxQuery = {
+  companyId?: string;
   view: InboxView;
   campaignId?: string;
   limit: number;
@@ -74,6 +75,9 @@ export async function listInboxItems(query: InboxQuery): Promise<{ items: InboxI
     .order("sent_at", { ascending: false })
     .limit(limit + 1);
 
+  if (query.companyId) {
+    request = request.eq("company_id", query.companyId);
+  }
   if (query.view === "replies") {
     request = request.not("replied_at", "is", null);
   }

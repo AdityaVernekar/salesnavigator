@@ -2,7 +2,7 @@ import Link from "next/link";
 import { LeadsFilterForm } from "@/components/leads/leads-filter-form";
 import { type LeadRow } from "@/components/leads/leads-table";
 import { LeadsTableShell } from "@/components/leads/leads-table-shell";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
@@ -52,14 +52,17 @@ function buildLeadsHref(page: number, filters: LeadsFilters) {
 }
 
 async function getLeadRows(
+  supabase: Awaited<ReturnType<typeof requireCurrentUserCompany>>["supabase"],
+  companyId: string,
   requestedPage: number,
   filters: LeadsFilters,
 ): Promise<LeadsPageData> {
   const firstFrom = (requestedPage - 1) * PAGE_SIZE;
   const firstTo = firstFrom + PAGE_SIZE - 1;
-  let firstQuery = supabaseServer
+  let firstQuery = supabase
     .from("leads")
     .select("id,company_name,source,status,created_at", { count: "exact" })
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .range(firstFrom, firstTo);
 
@@ -87,9 +90,10 @@ async function getLeadRows(
       ? (firstLeads ?? [])
       : ((
           await (() => {
-            let fallbackQuery = supabaseServer
+            let fallbackQuery = supabase
               .from("leads")
               .select("id,company_name,source,status,created_at")
+              .eq("company_id", companyId)
               .order("created_at", { ascending: false })
               .range(
                 (currentPage - 1) * PAGE_SIZE,
@@ -128,9 +132,10 @@ async function getLeadRows(
   }
 
   const leadIds = leads.map((lead) => lead.id);
-  const { data: contacts } = await supabaseServer
+  const { data: contacts } = await supabase
     .from("contacts")
     .select("id,lead_id,name,company_name,created_at")
+    .eq("company_id", companyId)
     .in("lead_id", leadIds)
     .order("created_at", { ascending: false });
 
@@ -143,9 +148,10 @@ async function getLeadRows(
 
   const contactIds = (contacts ?? []).map((contact) => contact.id);
   const { data: scores } = contactIds.length
-    ? await supabaseServer
+    ? await supabase
         .from("icp_scores")
         .select("contact_id,score,tier,positive_signals")
+        .eq("company_id", companyId)
         .in("contact_id", contactIds)
     : { data: [] };
 
@@ -211,13 +217,15 @@ export default async function LeadsPage({
     q: (resolvedSearchParams.q ?? "").trim(),
     campaignId: (resolvedSearchParams.campaignId ?? "").trim() || "all",
   };
-  const { data: campaigns } = await supabaseServer
+  const { supabase, companyId } = await requireCurrentUserCompany();
+  const { data: campaigns } = await supabase
     .from("campaigns")
     .select("id,name")
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false });
 
   const { rows, totalCount, totalPages, currentPage, from, to } =
-    await getLeadRows(requestedPage, filters);
+    await getLeadRows(supabase, companyId, requestedPage, filters);
 
   const previousPageHref = buildLeadsHref(
     Math.max(1, currentPage - 1),

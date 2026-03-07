@@ -3,7 +3,7 @@ import { ContactsEditableTable } from "@/components/leads/contacts-editable-tabl
 import { LeadCompanyDetails } from "@/components/leads/lead-company-details";
 import { LeadDetailActions } from "@/components/leads/lead-detail-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
@@ -13,28 +13,32 @@ export default async function LeadDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const { supabase, companyId } = await requireCurrentUserCompany();
 
-  const { data: leadById } = await supabaseServer
+  const { data: leadById } = await supabase
     .from("leads")
     .select(
       "id,company_name,company_domain,source,status,created_at,company_description,fit_reasoning,researched_at",
     )
+    .eq("company_id", companyId)
     .eq("id", id)
     .maybeSingle();
 
-  const { data: contactById } = await supabaseServer
+  const { data: contactById } = await supabase
     .from("contacts")
     .select("id,lead_id,name,email,headline,linkedin_url,company_name")
+    .eq("company_id", companyId)
     .eq("id", id)
     .maybeSingle();
 
   const leadId = leadById?.id ?? contactById?.lead_id ?? null;
   const { data: lead } = leadId
-    ? await supabaseServer
+    ? await supabase
         .from("leads")
         .select(
           "id,company_name,company_domain,source,status,created_at,company_description,fit_reasoning,researched_at",
         )
+        .eq("company_id", companyId)
         .eq("id", leadId)
         .maybeSingle()
     : { data: null };
@@ -44,20 +48,22 @@ export default async function LeadDetailPage({
   }
 
   const { data: contacts } = lead?.id
-    ? await supabaseServer
+    ? await supabase
         .from("contacts")
         .select(
           "id,lead_id,name,email,headline,linkedin_url,company_name,created_at",
         )
+        .eq("company_id", companyId)
         .eq("lead_id", lead.id)
         .order("created_at", { ascending: false })
     : { data: contactById ? [contactById] : [] };
 
   const contactIds = (contacts ?? []).map((contact) => contact.id);
   const { data: scores } = contactIds.length
-    ? await supabaseServer
+    ? await supabase
         .from("icp_scores")
         .select("contact_id,score,tier,reasoning")
+        .eq("company_id", companyId)
         .in("contact_id", contactIds)
     : { data: [] };
   const scoreByContact = new Map(

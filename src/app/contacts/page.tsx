@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ContactsTableShell } from "@/components/contacts/contacts-table-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
@@ -36,12 +36,14 @@ function buildContactsHref(page: number, q: string) {
 }
 
 async function getContactRows(requestedPage: number, q: string): Promise<ContactsPageData> {
+  const { supabase, companyId } = await requireCurrentUserCompany();
   const firstFrom = (requestedPage - 1) * PAGE_SIZE;
   const firstTo = firstFrom + PAGE_SIZE - 1;
 
-  let query = supabaseServer
+  let query = supabase
     .from("contacts")
     .select("id,lead_id,name,email,linkedin_url,company_name,created_at", { count: "exact" })
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .or("email.not.is.null,linkedin_url.not.is.null")
     .range(firstFrom, firstTo);
@@ -62,9 +64,10 @@ async function getContactRows(requestedPage: number, q: string): Promise<Contact
     currentPage === requestedPage
       ? (firstContacts ?? [])
       : ((
-          await supabaseServer
+          await supabase
             .from("contacts")
             .select("id,lead_id,name,email,linkedin_url,company_name,created_at")
+            .eq("company_id", companyId)
             .order("created_at", { ascending: false })
             .or("email.not.is.null,linkedin_url.not.is.null")
             .range(
@@ -92,18 +95,20 @@ async function getContactRows(requestedPage: number, q: string): Promise<Contact
 
   const leadIds = Array.from(new Set(eligibleContacts.map((contact) => contact.lead_id).filter(Boolean)));
   const { data: leads } = leadIds.length
-    ? await supabaseServer
+    ? await supabase
         .from("leads")
         .select("id,status,source,company_name")
+        .eq("company_id", companyId)
         .in("id", leadIds)
     : { data: [] };
   const leadById = new Map((leads ?? []).map((lead) => [lead.id, lead]));
 
   const contactIds = eligibleContacts.map((contact) => contact.id);
   const { data: scores } = contactIds.length
-    ? await supabaseServer
+    ? await supabase
         .from("icp_scores")
         .select("contact_id,score,tier,scored_at")
+        .eq("company_id", companyId)
         .in("contact_id", contactIds)
         .order("scored_at", { ascending: false })
     : { data: [] };

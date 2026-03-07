@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { leadTargetSchema } from "@/lib/campaigns/validation";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const campaignPatchSchema = z.object({
   leads_per_run: leadTargetSchema.optional(),
@@ -17,7 +17,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const { data, error } = await supabaseServer.from("campaigns").select("*").eq("id", id).single();
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
+
+  const { data, error } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("id", id)
+    .single();
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 404 });
   return NextResponse.json({ ok: true, campaign: data });
 }
@@ -28,10 +37,15 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { supabase, companyId } = contextResult.context;
+
     const body = campaignPatchSchema.passthrough().parse(await request.json());
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabase
       .from("campaigns")
       .update(body)
+      .eq("company_id", companyId)
       .eq("id", id)
       .select("*")
       .single();

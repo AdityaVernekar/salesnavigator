@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const schema = z.object({
   accountIds: z.array(z.string().uuid()),
@@ -15,6 +15,10 @@ export async function POST(
 ) {
   const { id } = await params;
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { supabase, companyId } = contextResult.context;
+
     const { accountIds, mailboxSelectionMode, primaryAccountId, templateExperimentId } = schema.parse(await request.json());
     if (mailboxSelectionMode === "explicit_single" && !primaryAccountId) {
       throw new Error("Primary mailbox is required for explicit single mode");
@@ -23,7 +27,7 @@ export async function POST(
       throw new Error("Primary mailbox must be included in assigned accountIds");
     }
 
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabase
       .from("campaigns")
       .update({
         account_ids: accountIds,
@@ -32,6 +36,7 @@ export async function POST(
         template_experiment_id: templateExperimentId ?? null,
         updated_at: new Date().toISOString(),
       })
+      .eq("company_id", companyId)
       .eq("id", id)
       .select("id,account_ids,mailbox_selection_mode,primary_account_id,template_experiment_id")
       .single();

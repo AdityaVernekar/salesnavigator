@@ -1,6 +1,6 @@
 import { InboxDashboard } from "@/components/inbox/inbox-dashboard";
 import { listInboxItems } from "@/lib/inbox/service";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
@@ -22,15 +22,17 @@ export default async function InboxPage({
   const cursor = readParam(params.cursor, "");
   const limitRaw = Number(readParam(params.limit, "50"));
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 50;
+  const { supabase, companyId } = await requireCurrentUserCompany();
 
   const [inboxResult, campaignResult] = await Promise.all([
     listInboxItems({
+      companyId,
       view,
       campaignId: campaignId === "all" ? undefined : campaignId,
       limit,
       cursor: cursor || undefined,
     }),
-    supabaseServer.from("campaigns").select("id,name").order("name", { ascending: true }),
+    supabase.from("campaigns").select("id,name").eq("company_id", companyId).order("name", { ascending: true }),
   ]);
 
   const campaigns = (campaignResult.data ?? []).map((campaign) => ({

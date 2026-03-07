@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { GmailAccountCard } from "@/components/gmail/gmail-account-card";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
@@ -30,22 +30,27 @@ export default async function SettingsPage({
       : null;
   const gmailEmail =
     typeof query.gmailEmail === "string" ? query.gmailEmail : null;
+  const { supabase, companyId } = await requireCurrentUserCompany();
 
   async function toggleMailboxStatus(formData: FormData) {
     "use server";
+    const { supabase: actionClient, companyId: actionCompanyId } =
+      await requireCurrentUserCompany();
     const accountId = String(formData.get("accountId") ?? "");
     const isActive = String(formData.get("isActive") ?? "") === "true";
     if (!accountId) return;
-    await supabaseServer
+    await actionClient
       .from("email_accounts")
       .update({ is_active: !isActive })
+      .eq("company_id", actionCompanyId)
       .eq("id", accountId);
     revalidatePath("/settings");
   }
 
-  const { data: accounts } = await supabaseServer
+  const { data: accounts } = await supabase
     .from("email_accounts")
     .select("*")
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false });
 
   return (

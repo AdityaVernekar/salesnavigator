@@ -2,14 +2,16 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { CampaignCard } from "@/components/campaigns/campaign-card";
 import { CampaignAiQuickGenerate } from "@/components/campaigns/campaign-ai-quick-generate";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
 export default async function CampaignsPage() {
-  const { data: campaigns } = await supabaseServer
+  const { supabase, companyId } = await requireCurrentUserCompany();
+  const { data: campaigns } = await supabase
     .from("campaigns")
     .select("id,name,status")
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false });
 
   return (

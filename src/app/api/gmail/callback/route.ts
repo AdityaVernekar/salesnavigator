@@ -1,8 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createSupabaseServerAuthClient } from "@/lib/supabase/server-auth";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
   try {
+    const supabaseAuth = await createSupabaseServerAuthClient();
+    const {
+      data: { user },
+    } = await supabaseAuth.auth.getUser();
+
+    if (!user) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("next", "/settings");
+      return NextResponse.redirect(loginUrl);
+    }
+
+    const { data: membership } = await supabaseAuth
+      .from("company_users")
+      .select("company_id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .maybeSingle();
+    const companyId = membership?.company_id;
+    if (!companyId) {
+      throw new Error("No company membership found");
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const status =
       searchParams.get("status") ??
@@ -32,6 +55,7 @@ export async function GET(request: NextRequest) {
 
     const { error } = await supabaseServer.from("email_accounts").upsert(
       {
+        company_id: companyId,
         gmail_address: email.trim().toLowerCase(),
         display_name: displayName ?? null,
         composio_user_id: userId,

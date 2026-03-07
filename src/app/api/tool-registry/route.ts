@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireRouteContext } from "@/lib/auth/route-context";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const registerMcpToolSchema = z.object({
@@ -43,14 +44,20 @@ const activateToolSchema = z.object({
 });
 
 export async function GET() {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const [toolsResp, serversResp] = await Promise.all([
     supabaseServer
       .from("tool_registry")
       .select("id,tool_key,provider,status,agent_types_allowed,mcp_server_name,mcp_tool_name,validation,updated_at")
+      .eq("company_id", companyId)
       .order("tool_key", { ascending: true }),
     supabaseServer
       .from("mcp_servers")
       .select("id,name,status,endpoint,metadata,last_health_check_at,updated_at")
+      .eq("company_id", companyId)
       .order("name", { ascending: true }),
   ]);
 
@@ -69,6 +76,10 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const body = await request.json();
 
   const cursorConfigParsed = registerCursorMcpJsonSchema.safeParse(body);
@@ -86,6 +97,7 @@ export async function POST(request: NextRequest) {
 
       await supabaseServer.from("mcp_servers").upsert(
         {
+          company_id: companyId,
           name: serverName,
           endpoint,
           status: "disabled",
@@ -110,6 +122,7 @@ export async function POST(request: NextRequest) {
         createdToolKeys.push(toolKey);
         await supabaseServer.from("tool_registry").upsert(
           {
+            company_id: companyId,
             tool_key: toolKey,
             provider: "mcp",
             status: "disabled",
@@ -152,6 +165,7 @@ export async function POST(request: NextRequest) {
 
   await supabaseServer.from("mcp_servers").upsert(
     {
+      company_id: companyId,
       name: mcpServerName,
       endpoint: serverEndpoint ?? null,
       status: "disabled",
@@ -165,6 +179,7 @@ export async function POST(request: NextRequest) {
     .from("tool_registry")
     .upsert(
       {
+        company_id: companyId,
         tool_key: parsed.data.toolKey,
         provider: "mcp",
         status: "disabled",
@@ -187,6 +202,10 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const body = await request.json();
   const parsed = activateToolSchema.safeParse(body);
   if (!parsed.success) {
@@ -196,6 +215,7 @@ export async function PATCH(request: NextRequest) {
   const { data: tool, error: toolError } = await supabaseServer
     .from("tool_registry")
     .select("tool_key,provider,mcp_server_name,validation")
+    .eq("company_id", companyId)
     .eq("tool_key", parsed.data.toolKey)
     .single();
 
@@ -207,6 +227,7 @@ export async function PATCH(request: NextRequest) {
     const { error } = await supabaseServer
       .from("tool_registry")
       .update({ status: "enabled", updated_at: new Date().toISOString() })
+      .eq("company_id", companyId)
       .eq("tool_key", parsed.data.toolKey);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     return NextResponse.json({ ok: true });
@@ -225,6 +246,7 @@ export async function PATCH(request: NextRequest) {
   const { data: server, error: serverError } = await supabaseServer
     .from("mcp_servers")
     .select("name,status")
+    .eq("company_id", companyId)
     .eq("name", serverName)
     .single();
 
@@ -246,6 +268,7 @@ export async function PATCH(request: NextRequest) {
   const { error } = await supabaseServer
     .from("tool_registry")
     .update({ status: "enabled", updated_at: new Date().toISOString() })
+    .eq("company_id", companyId)
     .eq("tool_key", parsed.data.toolKey);
 
   if (error) {

@@ -8,6 +8,7 @@ import { SequenceBuilder } from "@/components/campaigns/sequence-builder";
 import { leadTargetSchema } from "@/lib/campaigns/validation";
 import { env } from "@/lib/config/env";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type MailboxMode = "least_loaded" | "round_robin" | "explicit_single";
@@ -39,6 +40,7 @@ function readIntParam(
 
 async function createCampaign(formData: FormData) {
   "use server";
+  const { companyId } = await requireCurrentUserCompany();
 
   const name = String(formData.get("name") ?? "");
   const icp_description = String(formData.get("icp_description") ?? "");
@@ -75,6 +77,7 @@ async function createCampaign(formData: FormData) {
     const { data, error } = await supabaseServer
       .from("campaigns")
       .insert({
+        company_id: companyId,
         name,
         icp_description,
         scoring_rubric,
@@ -133,17 +136,20 @@ export default async function NewCampaignPage({
     primaryAccountId: readParam(params.primary_account_id),
     templateExperimentId: readParam(params.template_experiment_id),
   };
+  const { supabase, companyId } = await requireCurrentUserCompany();
 
   const [{ data: accounts }, { data: experiments }] = await Promise.all([
-    supabaseServer
+    supabase
       .from("email_accounts")
       .select("id,gmail_address,is_active")
+      .eq("company_id", companyId)
       .eq("is_active", true)
       .eq("connection_status", "connected")
       .order("created_at", { ascending: false }),
-    supabaseServer
+    supabase
       .from("email_template_experiments")
       .select("id,campaign_id,template_id,status")
+      .eq("company_id", companyId)
       .eq("status", "active")
       .order("created_at", { ascending: false }),
   ]);

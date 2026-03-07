@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireRouteContext } from "@/lib/auth/route-context";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const createExperimentSchema = z.object({
@@ -12,10 +13,15 @@ const createExperimentSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { companyId } = contextResult.context;
+
     const campaignId = request.nextUrl.searchParams.get("campaignId");
     const query = supabaseServer
       .from("email_template_experiments")
       .select("id,campaign_id,template_id,status,optimization_mode,min_sample_size,exploration_rate,winner_variant_id,created_at,updated_at")
+      .eq("company_id", companyId)
       .order("created_at", { ascending: false });
     const response = campaignId ? query.eq("campaign_id", campaignId) : query;
     const { data, error } = await response;
@@ -30,6 +36,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const parsed = createExperimentSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
@@ -40,6 +50,7 @@ export async function POST(request: NextRequest) {
     const { data: experiment, error: experimentError } = await supabaseServer
       .from("email_template_experiments")
       .insert({
+        company_id: companyId,
         campaign_id: payload.campaignId,
         template_id: payload.templateId,
         status: "active",
@@ -56,6 +67,7 @@ export async function POST(request: NextRequest) {
     const uniqueVariantIds = Array.from(new Set(payload.variantVersionIds));
     const initialWeight = Number((1 / uniqueVariantIds.length).toFixed(4));
     const rows = uniqueVariantIds.map((versionId, index) => ({
+      company_id: companyId,
       experiment_id: experiment.id,
       template_version_id: versionId,
       name: `Variant ${String.fromCharCode(65 + index)}`,
@@ -74,6 +86,7 @@ export async function POST(request: NextRequest) {
     await supabaseServer
       .from("campaigns")
       .update({ template_experiment_id: experiment.id, updated_at: new Date().toISOString() })
+      .eq("company_id", companyId)
       .eq("id", payload.campaignId);
 
     return NextResponse.json({ ok: true, experiment, variants: variants ?? [] });

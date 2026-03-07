@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const contactPatchSchema = z
   .object({
@@ -26,6 +26,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { supabase, companyId } = contextResult.context;
+
     const { id } = await params;
     const parsed = contactPatchSchema.parse(await request.json());
     const scorePayloadProvided =
@@ -44,9 +48,10 @@ export async function PATCH(
       company_name: cleanString(parsed.company_name),
     };
 
-    const { data: contactData, error } = await supabaseServer
+    const { data: contactData, error } = await supabase
       .from("contacts")
       .update(payload)
+      .eq("company_id", companyId)
       .eq("id", id)
       .select("id,name,email,headline,linkedin_url,company_name")
       .single();
@@ -58,9 +63,10 @@ export async function PATCH(
     let scoreData: { score: number | null; tier: string | null; reasoning: string | null } | null = null;
 
     if (scorePayloadProvided) {
-      const { data: existingScores, error: existingScoreError } = await supabaseServer
+      const { data: existingScores, error: existingScoreError } = await supabase
         .from("icp_scores")
         .select("id,score,tier,reasoning")
+        .eq("company_id", companyId)
         .eq("contact_id", id)
         .order("scored_at", { ascending: false })
         .limit(1);
@@ -79,21 +85,23 @@ export async function PATCH(
 
       if (typeof nextScore === "number" && typeof nextTier === "string") {
         if (existingScore?.id) {
-          const { error: updateScoreError } = await supabaseServer
+          const { error: updateScoreError } = await supabase
             .from("icp_scores")
             .update({
               score: nextScore,
               tier: nextTier,
               reasoning: nextReasoning,
             })
+            .eq("company_id", companyId)
             .eq("id", existingScore.id);
           if (updateScoreError) {
             return NextResponse.json({ ok: false, error: updateScoreError.message }, { status: 400 });
           }
         } else {
-          const { error: insertScoreError } = await supabaseServer
+          const { error: insertScoreError } = await supabase
             .from("icp_scores")
             .insert({
+              company_id: companyId,
               contact_id: id,
               score: nextScore,
               tier: nextTier,
@@ -112,9 +120,10 @@ export async function PATCH(
         };
       }
     } else {
-      const { data: existingScores } = await supabaseServer
+      const { data: existingScores } = await supabase
         .from("icp_scores")
         .select("score,tier,reasoning")
+        .eq("company_id", companyId)
         .eq("contact_id", id)
         .order("scored_at", { ascending: false })
         .limit(1);

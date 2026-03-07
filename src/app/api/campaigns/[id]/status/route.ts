@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const schema = z.object({
   status: z.enum(["active", "paused", "completed", "draft"]),
@@ -12,10 +12,15 @@ export async function POST(
 ) {
   const { id } = await params;
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { supabase, companyId } = contextResult.context;
+
     const { status } = schema.parse(await request.json());
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabase
       .from("campaigns")
       .update({ status })
+      .eq("company_id", companyId)
       .eq("id", id)
       .select("*")
       .single();

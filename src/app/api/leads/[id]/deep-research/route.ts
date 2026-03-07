@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildRuntimeAgent } from "@/lib/agents/build-runtime-agent";
 import { logRunEvent, updateRunState } from "@/lib/pipeline/run-state";
+import { requireRouteContext } from "@/lib/auth/route-context";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const paramsSchema = z.object({
@@ -13,7 +14,7 @@ const deepResearchOutputSchema = z.object({
   fit_reasoning: z.string().min(1),
 });
 
-async function runLeadDeepResearch(runId: string, leadId: string) {
+async function runLeadDeepResearch(runId: string, leadId: string, companyId: string) {
   await updateRunState(runId, {
     status: "running",
     current_stage: "enrichment",
@@ -21,6 +22,7 @@ async function runLeadDeepResearch(runId: string, leadId: string) {
   const { data: lead } = await supabaseServer
     .from("leads")
     .select("id,campaign_id,company_name,company_domain,linkedin_url,exa_url,raw_data")
+    .eq("company_id", companyId)
     .eq("id", leadId)
     .maybeSingle();
 
@@ -41,6 +43,7 @@ async function runLeadDeepResearch(runId: string, leadId: string) {
     ? await supabaseServer
         .from("campaigns")
         .select("id,name,icp_description,scoring_rubric,target_roles,target_industries,company_size,company_signals,disqualify_signals")
+        .eq("company_id", companyId)
         .eq("id", lead.campaign_id)
         .maybeSingle()
     : { data: null };
@@ -96,6 +99,7 @@ async function runLeadDeepResearch(runId: string, leadId: string) {
         fit_reasoning: result.fit_reasoning,
         researched_at: new Date().toISOString(),
       })
+      .eq("company_id", companyId)
       .eq("id", lead.id);
 
     await logRunEvent(runId, "enrichment", "success", "Lead deep research completed", {
@@ -119,6 +123,7 @@ async function runLeadDeepResearch(runId: string, leadId: string) {
         researched_at: new Date().toISOString(),
         fit_reasoning: `Deep research failed: ${error instanceof Error ? error.message : String(error)}`,
       })
+      .eq("company_id", companyId)
       .eq("id", lead.id);
     const message =
       error instanceof Error ? error.message : String(error);
@@ -139,6 +144,10 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const parsed = paramsSchema.safeParse(await params);
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "Invalid lead id" }, { status: 400 });
@@ -147,6 +156,7 @@ export async function POST(
   const { data: lead } = await supabaseServer
     .from("leads")
     .select("id,campaign_id,company_name,company_domain")
+    .eq("company_id", companyId)
     .eq("id", parsed.data.id)
     .maybeSingle();
 
@@ -157,6 +167,7 @@ export async function POST(
   const { data: run, error: runError } = await supabaseServer
     .from("pipeline_runs")
     .insert({
+      company_id: companyId,
       campaign_id: lead.campaign_id,
       trigger: "manual",
       status: "running",
@@ -187,7 +198,7 @@ export async function POST(
     companyDomain: lead.company_domain,
   });
 
-  void runLeadDeepResearch(run.id, parsed.data.id);
+  void runLeadDeepResearch(run.id, parsed.data.id, companyId);
   return NextResponse.json({
     ok: true,
     queued: true,

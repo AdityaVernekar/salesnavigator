@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RunsList } from "@/components/pipeline/runs-list";
 import { RunDetailsTabs } from "@/components/pipeline/run-details-tabs";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +13,13 @@ type SearchParams = {
 };
 
 async function getRunsPageData(searchParams: SearchParams) {
-  let runsQuery = supabaseServer
+  const { supabase, companyId } = await requireCurrentUserCompany();
+  let runsQuery = supabase
     .from("pipeline_runs")
     .select(
       "id,campaign_id,status,current_stage,run_mode,start_stage,end_stage,leads_generated,leads_enriched,leads_scored,emails_sent,started_at",
     )
+    .eq("company_id", companyId)
     .order("started_at", { ascending: false })
     .limit(100);
 
@@ -33,7 +35,7 @@ async function getRunsPageData(searchParams: SearchParams) {
 
   const [{ data: runs }, { data: campaigns }] = await Promise.all([
     runsQuery,
-    supabaseServer.from("campaigns").select("id,name").order("created_at", { ascending: false }),
+    supabase.from("campaigns").select("id,name").eq("company_id", companyId).order("created_at", { ascending: false }),
   ]);
 
   let observedRun =
@@ -43,11 +45,12 @@ async function getRunsPageData(searchParams: SearchParams) {
     null;
 
   if (!observedRun && searchParams.runId) {
-    const { data: runById } = await supabaseServer
+    const { data: runById } = await supabase
       .from("pipeline_runs")
       .select(
         "id,campaign_id,status,current_stage,run_mode,start_stage,end_stage,leads_generated,leads_enriched,leads_scored,emails_sent,started_at",
       )
+      .eq("company_id", companyId)
       .eq("id", searchParams.runId)
       .maybeSingle();
     observedRun = runById ?? null;
@@ -55,9 +58,10 @@ async function getRunsPageData(searchParams: SearchParams) {
 
   const logs = observedRun
     ? (
-        await supabaseServer
+        await supabase
           .from("run_logs")
           .select("*")
+          .eq("company_id", companyId)
           .eq("run_id", observedRun.id)
           .order("ts", { ascending: false })
           .limit(50)

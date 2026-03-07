@@ -1,10 +1,13 @@
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ runId: string }> },
 ) {
   const { runId } = await params;
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
@@ -38,15 +41,17 @@ export async function GET(
       const poll = async () => {
         if (closed) return;
         const [{ data: snapshotLogs }, { data: runStatus }] = await Promise.all([
-          supabaseServer
+          supabase
             .from("run_logs")
             .select("id,agent_type,level,message,metadata,ts")
+            .eq("company_id", companyId)
             .eq("run_id", runId)
             .order("id", { ascending: false })
             .limit(50),
-          supabaseServer
+          supabase
             .from("pipeline_runs")
             .select("status,current_stage")
+            .eq("company_id", companyId)
             .eq("id", runId)
             .single(),
         ]);
@@ -70,16 +75,18 @@ export async function GET(
         if (closed) return;
         try {
           const [{ data: newLogs }, { data: runStatus }] = await Promise.all([
-            supabaseServer
+            supabase
               .from("run_logs")
               .select("id,agent_type,level,message,metadata,ts")
+              .eq("company_id", companyId)
               .eq("run_id", runId)
               .gt("id", lastSeenId)
               .order("id", { ascending: true })
               .limit(20),
-            supabaseServer
+            supabase
               .from("pipeline_runs")
               .select("status,current_stage")
+              .eq("company_id", companyId)
               .eq("id", runId)
               .single(),
           ]);

@@ -1,19 +1,23 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 async function addSuppression(formData: FormData) {
   "use server";
+  const { companyId } = await requireCurrentUserCompany();
   const email = String(formData.get("email") ?? "");
   const reason = String(formData.get("reason") ?? "");
   if (!email) return;
-  await supabaseServer.from("suppressions").insert({ email, reason });
+  await supabaseServer.from("suppressions").insert({ email, reason, company_id: companyId });
 }
 
 export default async function SuppressionsPage() {
+  const { companyId } = await requireCurrentUserCompany();
   const { data } = await supabaseServer
     .from("suppressions")
     .select("*")
+    .eq("company_id", companyId)
     .order("added_at", { ascending: false });
 
   return (

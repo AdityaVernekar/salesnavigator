@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const leadStatusSchema = z.enum([
   "new",
@@ -35,8 +35,22 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const { data: contact } = await supabaseServer.from("contacts").select("*").eq("id", id).single();
-  const { data: score } = await supabaseServer.from("icp_scores").select("*").eq("contact_id", id).single();
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
+
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("id", id)
+    .single();
+  const { data: score } = await supabase
+    .from("icp_scores")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("contact_id", id)
+    .single();
 
   return NextResponse.json({ ok: true, contact, score });
 }
@@ -46,6 +60,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { supabase, companyId } = contextResult.context;
+
     const { id } = await params;
     const parsed = leadPatchSchema.parse(await request.json());
     const payload = {
@@ -63,9 +81,10 @@ export async function PATCH(
           : undefined,
     };
 
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabase
       .from("leads")
       .update(payload)
+      .eq("company_id", companyId)
       .eq("id", id)
       .select(
         "id,company_name,company_domain,source,status,company_description,fit_reasoning,researched_at",

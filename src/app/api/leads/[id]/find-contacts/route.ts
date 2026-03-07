@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildRuntimeAgent } from "@/lib/agents/build-runtime-agent";
 import { logRunEvent, updateRunState } from "@/lib/pipeline/run-state";
+import { requireRouteContext } from "@/lib/auth/route-context";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const paramsSchema = z.object({
@@ -140,7 +141,7 @@ async function discoverFromBranch(input: {
   })) as DiscoveredContact[];
 }
 
-async function runFindContacts(runId: string, leadId: string) {
+async function runFindContacts(runId: string, leadId: string, companyId: string) {
   await updateRunState(runId, {
     status: "running",
     current_stage: "people_discovery",
@@ -148,6 +149,7 @@ async function runFindContacts(runId: string, leadId: string) {
   const { data: lead } = await supabaseServer
     .from("leads")
     .select("id,campaign_id,company_name,company_domain,linkedin_url,exa_url,raw_data")
+    .eq("company_id", companyId)
     .eq("id", leadId)
     .maybeSingle();
   if (!lead) {
@@ -167,6 +169,7 @@ async function runFindContacts(runId: string, leadId: string) {
     ? await supabaseServer
         .from("campaigns")
         .select("name,icp_description,target_roles")
+        .eq("company_id", companyId)
         .eq("id", lead.campaign_id)
         .maybeSingle()
     : { data: null };
@@ -226,6 +229,7 @@ async function runFindContacts(runId: string, leadId: string) {
   const { data: existingContacts } = await supabaseServer
     .from("contacts")
     .select("id,lead_id,linkedin_url,name")
+    .eq("company_id", companyId)
     .eq("lead_id", lead.id);
 
   const existingKeys = new Set(
@@ -245,6 +249,7 @@ async function runFindContacts(runId: string, leadId: string) {
     })
     .map((contact) => ({
       lead_id: lead.id,
+      company_id: companyId,
       campaign_id: lead.campaign_id,
       name: contact.name ?? null,
       first_name: contact.first_name ?? null,
@@ -276,7 +281,7 @@ async function runFindContacts(runId: string, leadId: string) {
   }
 
   await supabaseServer.from("contacts").insert(contactsToInsert);
-  await supabaseServer.from("leads").update({ status: "enriching" }).eq("id", lead.id);
+  await supabaseServer.from("leads").update({ status: "enriching" }).eq("company_id", companyId).eq("id", lead.id);
 
   for (const inserted of contactsToInsert.slice(0, 30)) {
     await logRunEvent(runId, "people_gen", "info", "Inserted discovered contact", {
@@ -306,6 +311,10 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
+
   const parsed = paramsSchema.safeParse(await params);
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "Invalid lead id" }, { status: 400 });
@@ -314,6 +323,7 @@ export async function POST(
   const { data: lead } = await supabaseServer
     .from("leads")
     .select("id,campaign_id,company_name,company_domain")
+    .eq("company_id", companyId)
     .eq("id", parsed.data.id)
     .maybeSingle();
 
@@ -324,6 +334,7 @@ export async function POST(
   const { data: run, error: runError } = await supabaseServer
     .from("pipeline_runs")
     .insert({
+      company_id: companyId,
       campaign_id: lead.campaign_id,
       trigger: "manual",
       status: "running",
@@ -352,7 +363,7 @@ export async function POST(
     companyDomain: lead.company_domain,
   });
 
-  void runFindContacts(run.id, parsed.data.id);
+  void runFindContacts(run.id, parsed.data.id, companyId);
   return NextResponse.json({
     ok: true,
     queued: true,

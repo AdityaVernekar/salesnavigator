@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const createSchema = z.object({
   email: z.string().email(),
@@ -8,9 +8,14 @@ const createSchema = z.object({
 });
 
 export async function GET() {
-  const { data, error } = await supabaseServer
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
+
+  const { data, error } = await supabase
     .from("suppressions")
     .select("*")
+    .eq("company_id", companyId)
     .order("added_at", { ascending: false });
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -19,10 +24,14 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { supabase, companyId } = contextResult.context;
+
     const payload = createSchema.parse(await request.json());
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabase
       .from("suppressions")
-      .insert(payload)
+      .insert({ ...payload, company_id: companyId })
       .select("*")
       .single();
 

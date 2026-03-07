@@ -8,6 +8,7 @@ import { logRunEvent, updateRunState } from "@/lib/pipeline/run-state";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getQueueAndWorkerMetrics } from "@/lib/pipeline/metrics";
 import { getDynamicWorkerCapacity } from "@/lib/pipeline/capacity-policy";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const triggerSchema = z.object({
   campaignId: z.string().uuid(),
@@ -20,6 +21,10 @@ const triggerSchema = z.object({
 export async function POST(request: NextRequest) {
   let runId: string | null = null;
   try {
+    const contextResult = await requireRouteContext();
+    if (!contextResult.ok) return contextResult.response;
+    const { supabase, companyId } = contextResult.context;
+
     const body = await request.json();
     const parsed = triggerSchema.parse(body);
     const runMode = parsed.runMode;
@@ -32,9 +37,20 @@ export async function POST(request: NextRequest) {
     const runConfig = normalizeRunConfig(parsed.runConfig, selectedStages);
     const campaignId = parsed.campaignId;
 
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("id", campaignId)
+      .maybeSingle();
+    if (!campaign) {
+      return NextResponse.json({ ok: false, error: "Campaign not found." }, { status: 404 });
+    }
+
     const { data: run, error: runError } = await supabaseServer
       .from("pipeline_runs")
       .insert({
+        company_id: companyId,
         campaign_id: campaignId,
         trigger: "manual",
         status: "running",

@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 export async function GET() {
-  const { data, error } = await supabaseServer
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { supabase, companyId } = contextResult.context;
+
+  const { data, error } = await supabase
     .from("email_accounts")
     .select("*")
+    .eq("company_id", companyId)
     .order("created_at", { ascending: false });
 
   if (error) {

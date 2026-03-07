@@ -4,11 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DashboardPipelineTrigger } from "@/components/pipeline/dashboard-pipeline-trigger";
 import { StatCards } from "@/components/pipeline/stat-cards";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
 async function getDashboardData() {
+  const { supabase, companyId } = await requireCurrentUserCompany();
   const [
     { count: leads },
     { count: emails },
@@ -17,17 +18,19 @@ async function getDashboardData() {
     campaignsResp,
     runsResp,
   ] = await Promise.all([
-    supabaseServer.from("leads").select("*", { count: "exact", head: true }),
-    supabaseServer.from("emails_sent").select("*", { count: "exact", head: true }),
-    supabaseServer.from("campaigns").select("*", { count: "exact", head: true }),
-    supabaseServer.from("pipeline_runs").select("*", { count: "exact", head: true }).eq("status", "running"),
-    supabaseServer
+    supabase.from("leads").select("*", { count: "exact", head: true }).eq("company_id", companyId),
+    supabase.from("emails_sent").select("*", { count: "exact", head: true }).eq("company_id", companyId),
+    supabase.from("campaigns").select("*", { count: "exact", head: true }).eq("company_id", companyId),
+    supabase.from("pipeline_runs").select("*", { count: "exact", head: true }).eq("company_id", companyId).eq("status", "running"),
+    supabase
       .from("campaigns")
       .select("id,name,leads_per_run,daily_send_limit")
+      .eq("company_id", companyId)
       .order("created_at", { ascending: false }),
-    supabaseServer
+    supabase
       .from("pipeline_runs")
       .select("id,campaign_id,status,current_stage,leads_generated,started_at,run_mode,start_stage,end_stage")
+      .eq("company_id", companyId)
       .order("started_at", { ascending: false })
       .limit(8),
   ]);

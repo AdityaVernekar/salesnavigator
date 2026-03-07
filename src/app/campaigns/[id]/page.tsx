@@ -8,7 +8,7 @@ import { LeadTargetEditor } from "@/components/campaigns/lead-target-editor";
 import { RunPipelineButton } from "@/components/campaigns/run-pipeline-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
@@ -18,35 +18,42 @@ export default async function CampaignDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { data: campaign } = await supabaseServer
+  const { supabase, companyId } = await requireCurrentUserCompany();
+  const { data: campaign } = await supabase
     .from("campaigns")
     .select("*")
+    .eq("company_id", companyId)
     .eq("id", id)
     .single();
-  const { data: enrollments } = await supabaseServer
+  const { data: enrollments } = await supabase
     .from("enrollments")
     .select("*")
+    .eq("company_id", companyId)
     .eq("campaign_id", id)
     .order("enrolled_at", { ascending: false });
-  const { data: runHistory } = await supabaseServer
+  const { data: runHistory } = await supabase
     .from("pipeline_runs")
     .select("id,status,current_stage,leads_generated,started_at,finished_at,run_mode,start_stage,end_stage")
+    .eq("company_id", companyId)
     .eq("campaign_id", id)
     .order("started_at", { ascending: false })
     .limit(10);
-  const { count: campaignLeadCount } = await supabaseServer
+  const { count: campaignLeadCount } = await supabase
     .from("leads")
     .select("*", { count: "exact", head: true })
+    .eq("company_id", companyId)
     .eq("campaign_id", id);
-  const { data: activeMailboxes } = await supabaseServer
+  const { data: activeMailboxes } = await supabase
     .from("email_accounts")
     .select("id,gmail_address,is_active")
+    .eq("company_id", companyId)
     .eq("is_active", true)
     .eq("connection_status", "connected")
     .order("created_at", { ascending: false });
-  const { data: experiments } = await supabaseServer
+  const { data: experiments } = await supabase
     .from("email_template_experiments")
     .select("id,status")
+    .eq("company_id", companyId)
     .eq("campaign_id", id)
     .order("created_at", { ascending: false });
 
@@ -58,9 +65,10 @@ export default async function CampaignDetailPage({
     new Set((enrollments ?? []).map((item) => item.contact_id)),
   );
   const { data: contacts } = contactIds.length
-    ? await supabaseServer
+    ? await supabase
         .from("contacts")
         .select("id,name,email")
+        .eq("company_id", companyId)
         .in("id", contactIds)
     : {
         data: [] as Array<{
