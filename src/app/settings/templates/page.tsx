@@ -1,14 +1,16 @@
 import { TemplateChatManager } from "@/components/templates/template-chat-manager";
 import { listEmailTemplates, getEmailTemplateVersions } from "@/lib/email/templates";
+import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
 export default async function TemplatesSettingsPage() {
-  const templates = await listEmailTemplates();
+  const { companyId } = await requireCurrentUserCompany();
+  const templates = await listEmailTemplates(companyId);
 
   const hydratedTemplates = await Promise.all(
     templates.map(async (template) => {
-      const versions = await getEmailTemplateVersions(template.id);
+      const versions = await getEmailTemplateVersions(companyId, template.id);
       return {
         ...template,
         versions,

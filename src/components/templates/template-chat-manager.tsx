@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,14 +27,10 @@ type TemplateRecord = {
   activeVersion: TemplateVersion | null;
 };
 
-type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
-
 type GeneratedDraft = {
   subjectTemplate: string;
   bodyTemplate: string;
+  rationale?: string | null;
   placeholders: string[];
 };
 
@@ -49,9 +44,7 @@ export function TemplateChatManager({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplates[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
   const [templateName, setTemplateName] = useState("");
-  const [saveAsVersion, setSaveAsVersion] = useState(true);
   const [generatedDraft, setGeneratedDraft] = useState<GeneratedDraft | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,8 +55,13 @@ export function TemplateChatManager({
     const refreshedData = (await refreshed.json()) as { ok: boolean; templates: TemplateRecord[] };
     if (refreshedData.ok) {
       setTemplates(refreshedData.templates ?? []);
-      if (nextSelectedTemplateId) {
+      if (nextSelectedTemplateId && refreshedData.templates?.some((item) => item.id === nextSelectedTemplateId)) {
         setSelectedTemplateId(nextSelectedTemplateId);
+      } else if (
+        selectedTemplateId &&
+        !refreshedData.templates?.some((item) => item.id === selectedTemplateId)
+      ) {
+        setSelectedTemplateId(refreshedData.templates?.[0]?.id ?? "");
       } else if (!selectedTemplateId && refreshedData.templates?.length) {
         setSelectedTemplateId(refreshedData.templates[0].id);
       }
@@ -76,45 +74,25 @@ export function TemplateChatManager({
     setIsGenerating(true);
     setError(null);
     setFeedback(null);
-    setMessages((prev) => [...prev, { role: "user", content: prompt }]);
     try {
-      const response = await fetch("/api/templates/chat", {
+      const response = await fetch("/api/templates/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
-          templateId: selectedTemplateId || undefined,
-          templateName: templateName || undefined,
-          saveAsVersion,
-          createdBy: "settings-templates-ui",
         }),
       });
       const data = (await response.json()) as {
         ok: boolean;
         error?: string;
-        draft?: { subjectTemplate: string; bodyTemplate: string; placeholders: string[] };
-        persisted?: { kind: string; templateId: string; versionId: string; version: number } | null;
+        draft?: { subjectTemplate: string; bodyTemplate: string; rationale?: string | null; placeholders: string[] };
       };
       if (!response.ok || !data.ok || !data.draft) {
         throw new Error(data.error ?? "Failed to generate template");
       }
       const draft = data.draft;
       setGeneratedDraft(draft);
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `Subject: ${draft.subjectTemplate}\n\nBody:\n${draft.bodyTemplate}`,
-        },
-      ]);
-      setPrompt("");
-      if (data.persisted) {
-        setFeedback(`Saved ${data.persisted.kind} version v${data.persisted.version}.`);
-        await refreshTemplates(data.persisted.templateId);
-      } else {
-        setFeedback("Draft generated. Use the save buttons below to store it.");
-      }
+      setFeedback("Draft generated. Review and save it explicitly.");
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Failed to generate template");
     } finally {
@@ -193,6 +171,7 @@ export function TemplateChatManager({
           <CardTitle>Template Repository</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
+          <p className="text-xs text-muted-foreground">Showing all persisted templates in this workspace.</p>
           {templates.map((template) => (
               <Button
                 key={template.id}
@@ -219,7 +198,7 @@ export function TemplateChatManager({
       <div className="space-y-4">
         <Card>
           <CardHeader>
-            <CardTitle>Template Chat Builder</CardTitle>
+            <CardTitle>Template Quick Generate</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2">
@@ -243,28 +222,16 @@ export function TemplateChatManager({
                 disabled={isGenerating}
               />
             </div>
-            <Label className="flex items-center gap-2 text-sm font-normal">
-              <Checkbox checked={saveAsVersion} onCheckedChange={(value) => setSaveAsVersion(Boolean(value))} disabled={isGenerating} />
-              Save generated output to DB
-            </Label>
             <Button type="button" onClick={submitPrompt} disabled={isGenerating || !prompt.trim()}>
               {isGenerating ? "Generating..." : "Generate Template"}
             </Button>
 
-            {messages.length > 0 ? (
-              <div className="space-y-2 rounded border p-3">
-                {messages.map((message, index) => (
-                  <div key={`${message.role}-${index}`} className="rounded bg-muted/40 p-2 text-sm">
-                    <p className="mb-1 font-medium capitalize">{message.role}</p>
-                    <pre className="whitespace-pre-wrap text-xs">{message.content}</pre>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
             {generatedDraft ? (
               <div className="space-y-2 rounded border p-3">
                 <p className="text-sm font-medium">Latest Generated Draft</p>
+                {generatedDraft.rationale ? (
+                  <p className="text-xs text-muted-foreground">{generatedDraft.rationale}</p>
+                ) : null}
                 <div className="space-y-2">
                   <Label htmlFor="generatedSubject">Subject</Label>
                   <Input
@@ -302,6 +269,11 @@ export function TemplateChatManager({
                     disabled={isSavingDraft}
                   />
                 </div>
+                {!!generatedDraft.placeholders.length ? (
+                  <p className="text-xs text-muted-foreground">
+                    Placeholders: {generatedDraft.placeholders.map((item) => `{{${item}}}`).join(", ")}
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" onClick={() => saveGeneratedDraft("new_template")} disabled={isSavingDraft}>
                     {isSavingDraft ? "Saving..." : "Save as New Template"}

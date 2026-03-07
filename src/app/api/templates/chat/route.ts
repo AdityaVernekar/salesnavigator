@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { buildRuntimeAgent } from "@/lib/agents/build-runtime-agent";
+import { requireRouteContext } from "@/lib/auth/route-context";
 import {
   appendTemplateMessage,
   assertTemplatePlaceholders,
@@ -25,6 +26,9 @@ const chatSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
   const parsed = chatSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
@@ -34,9 +38,18 @@ export async function POST(request: NextRequest) {
   try {
     const session = data.sessionId
       ? { id: data.sessionId }
-      : await createTemplateSession({ templateId: data.templateId, createdBy: data.createdBy });
+      : await createTemplateSession({
+          companyId,
+          templateId: data.templateId,
+          createdBy: data.createdBy,
+        });
 
-    await appendTemplateMessage({ sessionId: session.id, role: "user", content: data.prompt });
+    await appendTemplateMessage({
+      companyId,
+      sessionId: session.id,
+      role: "user",
+      content: data.prompt,
+    });
 
     const runtime = await buildRuntimeAgent("cold_email");
     const generation = await runtime.agent.generate(
@@ -57,6 +70,7 @@ export async function POST(request: NextRequest) {
     const placeholders = assertTemplatePlaceholders(draft.subject_template, draft.body_template);
 
     await appendTemplateMessage({
+      companyId,
       sessionId: session.id,
       role: "assistant",
       content: JSON.stringify(draft),
@@ -71,6 +85,7 @@ export async function POST(request: NextRequest) {
     if (data.saveAsVersion) {
       if (data.templateId) {
         const version = await createTemplateVersion({
+          companyId,
           templateId: data.templateId,
           subjectTemplate: draft.subject_template,
           bodyTemplate: draft.body_template,
@@ -88,6 +103,7 @@ export async function POST(request: NextRequest) {
       } else {
         const name = data.templateName?.trim() || `Template ${new Date().toISOString().slice(0, 19)}`;
         const created = await createEmailTemplate({
+          companyId,
           name,
           subjectTemplate: draft.subject_template,
           bodyTemplate: draft.body_template,

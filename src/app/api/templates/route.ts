@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createEmailTemplate, getEmailTemplateVersions, listEmailTemplates } from "@/lib/email/templates";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const createTemplateSchema = z.object({
   name: z.string().min(1),
@@ -12,11 +13,14 @@ const createTemplateSchema = z.object({
 });
 
 export async function GET() {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
   try {
-    const templates = await listEmailTemplates();
+    const templates = await listEmailTemplates(companyId);
     const withActiveVersion = await Promise.all(
       templates.map(async (template) => {
-        const versions = await getEmailTemplateVersions(template.id);
+        const versions = await getEmailTemplateVersions(companyId, template.id);
         return {
           ...template,
           versions,
@@ -35,13 +39,19 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
   const parsed = createTemplateSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
   }
 
   try {
-    const created = await createEmailTemplate(parsed.data);
+    const created = await createEmailTemplate({
+      ...parsed.data,
+      companyId,
+    });
     return NextResponse.json({ ok: true, template: created.template, version: created.version });
   } catch (error) {
     return NextResponse.json(

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sendEmailWithComposio } from "@/lib/composio/gmail";
 import { htmlToPlainText } from "@/lib/email/templates";
+import { appendSignatureHtml } from "@/lib/email/signature";
 import { requireRouteContext } from "@/lib/auth/route-context";
 
 const paramsSchema = z.object({
@@ -14,6 +15,8 @@ const sendEmailSchema = z.object({
   subject: z.string().trim().min(1).max(300),
   bodyHtml: z.string().trim().min(1),
   templateVersionId: z.string().uuid().nullable().optional(),
+  includeSignature: z.boolean().optional().default(true),
+  replyThreadId: z.string().trim().min(1).nullable().optional(),
 });
 
 export async function POST(
@@ -62,7 +65,7 @@ export async function POST(
 
   const { data: account } = await supabase
     .from("email_accounts")
-    .select("id,is_active,connection_status")
+    .select("id,is_active,connection_status,signature_html")
     .eq("company_id", companyId)
     .eq("id", payload.accountId)
     .maybeSingle();
@@ -71,13 +74,17 @@ export async function POST(
   }
 
   try {
-    const bodyText = htmlToPlainText(payload.bodyHtml);
+    const finalBodyHtml = payload.includeSignature
+      ? appendSignatureHtml(payload.bodyHtml, account.signature_html)
+      : payload.bodyHtml;
+    const bodyText = htmlToPlainText(finalBodyHtml);
     const sendResult = await sendEmailWithComposio(
       account.id,
       contact.email,
       payload.subject,
-      payload.bodyHtml,
+      finalBodyHtml,
       bodyText,
+      { threadId: payload.replyThreadId ?? undefined },
     );
     const sentAt = new Date().toISOString();
 
@@ -96,7 +103,7 @@ export async function POST(
         is_test_send: false,
         render_mode: sendResult.mode,
         subject: payload.subject,
-        body_html: payload.bodyHtml,
+        body_html: finalBodyHtml,
         sent_at: sentAt,
         template_version_id: payload.templateVersionId ?? null,
         gmail_thread_id: sendResult.threadId ?? null,

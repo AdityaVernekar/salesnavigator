@@ -138,6 +138,7 @@ export async function POST(
       },
       contactId: sourceEmail.contact_id,
       accountId: sourceEmail.account_id ?? null,
+      replyThreadId: sourceEmail.gmail_thread_id ?? null,
     });
   } catch (error) {
     return NextResponse.json(

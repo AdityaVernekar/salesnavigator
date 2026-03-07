@@ -3,7 +3,9 @@ import { revalidatePath } from "next/cache";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GmailAccountCard } from "@/components/gmail/gmail-account-card";
+import { MailboxSignatureSettings } from "@/components/gmail/mailbox-signature-settings";
 import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
@@ -65,107 +67,139 @@ export default async function SettingsPage({
         </Link>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Connect Gmail Mailbox</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form action="/api/gmail/connect" method="GET" className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Enter the Gmail address you want to connect. We will create/use its Composio user mapping automatically.
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                name="email"
-                type="email"
-                required
-                placeholder="name@company.com"
-                className="w-[260px]"
-              />
-              <Button type="submit">Connect Gmail</Button>
-            </div>
-            {gmailConnectStatus === "success" ? (
-              <p className="text-sm text-emerald-600">
-                Gmail connected successfully{gmailEmail ? ` for ${gmailEmail}` : ""}.
-              </p>
-            ) : null}
-            {gmailConnectStatus === "error" ? (
-              <p className="text-sm text-destructive">
-                Gmail connect failed{gmailConnectError ? `: ${gmailConnectError}` : "."}
-              </p>
-            ) : null}
-          </form>
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="mailboxes" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="mailboxes">Mailboxes</TabsTrigger>
+          <TabsTrigger value="agents">Agent Configs</TabsTrigger>
+          <TabsTrigger value="workspace">Workspace</TabsTrigger>
+        </TabsList>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {(accounts ?? []).map((account) => (
-          <GmailAccountCard
-            key={account.id}
-            gmail={account.gmail_address}
-            status={account.warmup_status}
-            connectionStatus={account.connection_status}
-            connectedAccountId={account.composio_connected_account_id}
-            lastConnectedAt={account.last_connected_at}
-            sendsToday={account.sends_today ?? 0}
-            dailyLimit={account.daily_limit ?? 50}
-            warmupDay={warmupDay(account.warmup_start_date)}
-            isActive={account.is_active ?? true}
-          >
-            <p className="text-xs text-muted-foreground">Composio user: {account.composio_user_id}</p>
-            <Link
-              className="inline-flex text-xs text-primary underline"
-              href={`/api/gmail/connect?email=${encodeURIComponent(account.gmail_address)}`}
-            >
-              Reconnect mailbox
-            </Link>
-            <form action={toggleMailboxStatus}>
-              <input type="hidden" name="accountId" value={account.id} />
-              <input type="hidden" name="isActive" value={(account.is_active ?? true) ? "true" : "false"} />
-              <Button type="submit" size="sm" variant="outline">
-                {(account.is_active ?? true) ? "Deactivate" : "Activate"}
-              </Button>
-            </form>
-          </GmailAccountCard>
-        ))}
-        {(accounts ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No connected mailboxes yet.</p>
-        ) : null}
-      </div>
+        <TabsContent value="mailboxes" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Connect Gmail Mailbox</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form action="/api/gmail/connect" method="GET" className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Enter the Gmail address you want to connect. We will create/use its Composio user mapping automatically.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    name="email"
+                    type="email"
+                    required
+                    placeholder="name@company.com"
+                    className="w-[260px]"
+                  />
+                  <Button type="submit">Connect Gmail</Button>
+                </div>
+                {gmailConnectStatus === "success" ? (
+                  <p className="text-sm text-emerald-600">
+                    Gmail connected successfully{gmailEmail ? ` for ${gmailEmail}` : ""}.
+                  </p>
+                ) : null}
+                {gmailConnectStatus === "error" ? (
+                  <p className="text-sm text-destructive">
+                    Gmail connect failed{gmailConnectError ? `: ${gmailConnectError}` : "."}
+                  </p>
+                ) : null}
+              </form>
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Agent Configs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/agents/lead_gen">Lead Gen</Link>
-            </Button>
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/agents/people_gen">People Gen</Link>
-            </Button>
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/agents/enrichment">Enrichment</Link>
-            </Button>
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/agents/scoring">Scoring</Link>
-            </Button>
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/agents/cold_email">Cold Email</Link>
-            </Button>
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/agents/followup">Follow-up</Link>
-            </Button>
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/suppressions">Suppressions</Link>
-            </Button>
-            <Button asChild variant="link" className="h-auto p-0">
-              <Link href="/settings/templates">Templates</Link>
-            </Button>
+          <div className="grid gap-4 md:grid-cols-2">
+            {(accounts ?? []).map((account) => (
+              <GmailAccountCard
+                key={account.id}
+                gmail={account.gmail_address}
+                status={account.warmup_status}
+                connectionStatus={account.connection_status}
+                connectedAccountId={account.composio_connected_account_id}
+                lastConnectedAt={account.last_connected_at}
+                sendsToday={account.sends_today ?? 0}
+                dailyLimit={account.daily_limit ?? 50}
+                warmupDay={warmupDay(account.warmup_start_date)}
+                isActive={account.is_active ?? true}
+              >
+                <p className="text-xs text-muted-foreground">Composio user: {account.composio_user_id}</p>
+                <Link
+                  className="inline-flex text-xs text-primary underline"
+                  href={`/api/gmail/connect?email=${encodeURIComponent(account.gmail_address)}`}
+                >
+                  Reconnect mailbox
+                </Link>
+                <form action={toggleMailboxStatus}>
+                  <input type="hidden" name="accountId" value={account.id} />
+                  <input type="hidden" name="isActive" value={(account.is_active ?? true) ? "true" : "false"} />
+                  <Button type="submit" size="sm" variant="outline">
+                    {(account.is_active ?? true) ? "Deactivate" : "Activate"}
+                  </Button>
+                </form>
+                <MailboxSignatureSettings
+                  accountId={account.id}
+                  initialSignatureHtml={account.signature_html}
+                  initialEnabledByDefault={account.signature_enabled_by_default}
+                />
+              </GmailAccountCard>
+            ))}
+            {(accounts ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">No connected mailboxes yet.</p>
+            ) : null}
           </div>
-        </CardContent>
-      </Card>
+        </TabsContent>
+
+        <TabsContent value="agents">
+          <Card>
+            <CardHeader>
+              <CardTitle>Agent Configs</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-2">
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/agents/lead_gen">Lead Gen</Link>
+                </Button>
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/agents/people_gen">People Gen</Link>
+                </Button>
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/agents/enrichment">Enrichment</Link>
+                </Button>
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/agents/scoring">Scoring</Link>
+                </Button>
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/agents/cold_email">Cold Email</Link>
+                </Button>
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/agents/followup">Follow-up</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="workspace">
+          <Card>
+            <CardHeader>
+              <CardTitle>Workspace Settings</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-2">
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/templates">Templates</Link>
+                </Button>
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/suppressions">Suppressions</Link>
+                </Button>
+                <Button asChild variant="link" className="h-auto p-0">
+                  <Link href="/settings/ops">Ops Dashboard</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

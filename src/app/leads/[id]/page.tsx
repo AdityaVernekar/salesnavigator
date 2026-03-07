@@ -88,7 +88,7 @@ export default async function LeadDetailPage({
       .order("updated_at", { ascending: false }),
     supabase
       .from("email_accounts")
-      .select("id,gmail_address")
+      .select("id,gmail_address,signature_html,signature_enabled_by_default")
       .eq("company_id", companyId)
       .eq("is_active", true)
       .eq("connection_status", "connected")
@@ -146,6 +146,8 @@ export default async function LeadDetailPage({
   const mailboxOptions = mailboxRows.map((item) => ({
     id: item.id,
     gmailAddress: item.gmail_address ?? "",
+    signatureHtml: item.signature_html ?? null,
+    signatureEnabledByDefault: item.signature_enabled_by_default ?? true,
   }));
 
   return (

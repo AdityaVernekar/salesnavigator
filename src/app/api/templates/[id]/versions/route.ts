@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { activateTemplateVersion, createTemplateVersion, getEmailTemplateVersions } from "@/lib/email/templates";
+import { requireRouteContext } from "@/lib/auth/route-context";
 
 const createVersionSchema = z.object({
   subjectTemplate: z.string().min(1),
@@ -20,9 +21,12 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
   const { id } = await params;
   try {
-    const versions = await getEmailTemplateVersions(id);
+    const versions = await getEmailTemplateVersions(companyId, id);
     return NextResponse.json({ ok: true, versions });
   } catch (error) {
     return NextResponse.json(
@@ -36,6 +40,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const contextResult = await requireRouteContext();
+  if (!contextResult.ok) return contextResult.response;
+  const { companyId } = contextResult.context;
   const { id } = await params;
   const body = await request.json();
   if (body?.action === "activate") {
@@ -44,7 +51,7 @@ export async function POST(
       return NextResponse.json({ ok: false, error: activateParsed.error.message }, { status: 400 });
     }
     try {
-      await activateTemplateVersion(id, activateParsed.data.versionId);
+      await activateTemplateVersion(companyId, id, activateParsed.data.versionId);
       return NextResponse.json({ ok: true });
     } catch (error) {
       return NextResponse.json(
@@ -60,6 +67,7 @@ export async function POST(
   }
   try {
     const version = await createTemplateVersion({
+      companyId,
       templateId: id,
       ...parsed.data,
     });

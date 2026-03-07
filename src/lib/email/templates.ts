@@ -84,10 +84,11 @@ export function renderTemplateBodies(
   return { bodyHtml, bodyText };
 }
 
-export async function listEmailTemplates() {
+export async function listEmailTemplates(companyId: string) {
   const { data, error } = await supabaseServer
     .from("email_templates")
     .select("id,name,status,active_version_id,created_at,updated_at")
+    .eq("company_id", companyId)
     .order("updated_at", { ascending: false });
   if (error) {
     throw new Error(error.message);
@@ -95,22 +96,24 @@ export async function listEmailTemplates() {
   return (data ?? []) as EmailTemplateRecord[];
 }
 
-export async function getEmailTemplateById(templateId: string) {
+export async function getEmailTemplateById(companyId: string, templateId: string) {
   const { data, error } = await supabaseServer
     .from("email_templates")
     .select("id,name,status,active_version_id,created_at,updated_at")
+    .eq("company_id", companyId)
     .eq("id", templateId)
     .single();
   if (error || !data) return null;
   return data as EmailTemplateRecord;
 }
 
-export async function getEmailTemplateVersions(templateId: string) {
+export async function getEmailTemplateVersions(companyId: string, templateId: string) {
   const { data, error } = await supabaseServer
     .from("email_template_versions")
     .select(
       "id,template_id,version,subject_template,body_template,prompt_context,placeholders,change_note,created_by,created_at",
     )
+    .eq("company_id", companyId)
     .eq("template_id", templateId)
     .order("version", { ascending: false });
   if (error) {
@@ -120,6 +123,7 @@ export async function getEmailTemplateVersions(templateId: string) {
 }
 
 export async function createEmailTemplate(input: {
+  companyId: string;
   name: string;
   subjectTemplate: string;
   bodyTemplate: string;
@@ -129,7 +133,11 @@ export async function createEmailTemplate(input: {
 }) {
   const { data: template, error: templateError } = await supabaseServer
     .from("email_templates")
-    .insert({ name: input.name, status: "active" })
+    .insert({
+      company_id: input.companyId,
+      name: input.name,
+      status: "active",
+    })
     .select("id,name,status,active_version_id,created_at,updated_at")
     .single();
   if (templateError || !template) {
@@ -140,6 +148,7 @@ export async function createEmailTemplate(input: {
   const { data: version, error: versionError } = await supabaseServer
     .from("email_template_versions")
     .insert({
+      company_id: input.companyId,
       template_id: template.id,
       version: 1,
       subject_template: input.subjectTemplate,
@@ -161,6 +170,7 @@ export async function createEmailTemplate(input: {
   const { error: activateError } = await supabaseServer
     .from("email_templates")
     .update({ active_version_id: version.id, updated_at: new Date().toISOString() })
+    .eq("company_id", input.companyId)
     .eq("id", template.id);
   if (activateError) {
     throw new Error(activateError.message);
@@ -170,6 +180,7 @@ export async function createEmailTemplate(input: {
 }
 
 export async function createTemplateVersion(input: {
+  companyId: string;
   templateId: string;
   subjectTemplate: string;
   bodyTemplate: string;
@@ -178,12 +189,13 @@ export async function createTemplateVersion(input: {
   changeNote?: string;
   activate?: boolean;
 }) {
-  const versions = await getEmailTemplateVersions(input.templateId);
+  const versions = await getEmailTemplateVersions(input.companyId, input.templateId);
   const nextVersion = (versions[0]?.version ?? 0) + 1;
   const placeholders = assertTemplatePlaceholders(input.subjectTemplate, input.bodyTemplate);
   const { data: version, error: versionError } = await supabaseServer
     .from("email_template_versions")
     .insert({
+      company_id: input.companyId,
       template_id: input.templateId,
       version: nextVersion,
       subject_template: input.subjectTemplate,
@@ -202,15 +214,16 @@ export async function createTemplateVersion(input: {
   }
 
   if (input.activate ?? true) {
-    await activateTemplateVersion(input.templateId, version.id);
+    await activateTemplateVersion(input.companyId, input.templateId, version.id);
   }
   return version as EmailTemplateVersionRecord;
 }
 
-export async function activateTemplateVersion(templateId: string, versionId: string) {
+export async function activateTemplateVersion(companyId: string, templateId: string, versionId: string) {
   const { error } = await supabaseServer
     .from("email_templates")
     .update({ active_version_id: versionId, updated_at: new Date().toISOString() })
+    .eq("company_id", companyId)
     .eq("id", templateId);
   if (error) {
     throw new Error(error.message);
@@ -218,6 +231,7 @@ export async function activateTemplateVersion(templateId: string, versionId: str
 }
 
 export async function createTemplateSession(input: {
+  companyId: string;
   templateId?: string;
   createdBy?: string;
   status?: "active" | "completed" | "failed";
@@ -225,6 +239,7 @@ export async function createTemplateSession(input: {
   const { data, error } = await supabaseServer
     .from("template_generation_sessions")
     .insert({
+      company_id: input.companyId,
       template_id: input.templateId ?? null,
       created_by: input.createdBy ?? null,
       status: input.status ?? "active",
@@ -238,6 +253,7 @@ export async function createTemplateSession(input: {
 }
 
 export async function appendTemplateMessage(input: {
+  companyId: string;
   sessionId: string;
   role: "user" | "assistant" | "system";
   content: string;
@@ -246,6 +262,7 @@ export async function appendTemplateMessage(input: {
   const { data, error } = await supabaseServer
     .from("template_generation_messages")
     .insert({
+      company_id: input.companyId,
       session_id: input.sessionId,
       role: input.role,
       content: input.content,
@@ -259,10 +276,11 @@ export async function appendTemplateMessage(input: {
   return data;
 }
 
-export async function getSessionMessages(sessionId: string) {
+export async function getSessionMessages(companyId: string, sessionId: string) {
   const { data, error } = await supabaseServer
     .from("template_generation_messages")
     .select("id,session_id,role,content,metadata,created_at")
+    .eq("company_id", companyId)
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true });
   if (error) {

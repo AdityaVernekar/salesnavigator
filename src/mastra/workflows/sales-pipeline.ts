@@ -19,6 +19,7 @@ import { selectSendingAccount } from "@/lib/email/router";
 import { sendEmailWithComposio } from "@/lib/composio/gmail";
 import { getActiveExperimentForCampaign, chooseVariant, recordVariantSend } from "@/lib/email/experiments";
 import { renderTemplate, renderTemplateBodies } from "@/lib/email/templates";
+import { appendSignatureText } from "@/lib/email/signature";
 import { pipelineRunConfigSchema } from "@/lib/pipeline/run-config";
 
 function safeParseJson(value: string | null): Record<string, unknown> {
@@ -1323,6 +1324,10 @@ export function buildEmailStep() {
           : [contact.email as string];
         const originalRecipient = contact.email ?? "(no-contact-email)";
         const nowIso = new Date().toISOString();
+        const finalBodyTextWithSignature =
+          account.signature_enabled_by_default
+            ? appendSignatureText(finalBodyText, account.signature_html)
+            : finalBodyText;
 
         for (const targetEmail of deliveryTargets) {
           await logRunEvent(inputData.runId, "cold_email", "info", "Email delivery prepared", {
@@ -1333,13 +1338,14 @@ export function buildEmailStep() {
             testModeEnabled,
             renderMode: "text/plain",
             personalizationSource,
+            signatureApplied: Boolean(account.signature_enabled_by_default && account.signature_html),
           });
           const sendResult = await sendEmailWithComposio(
             account.id,
             targetEmail,
             subject,
-            finalBodyText,
-            finalBodyText,
+            finalBodyTextWithSignature,
+            finalBodyTextWithSignature,
             { forceTextMode: true },
           );
           await logRunEvent(inputData.runId, "cold_email", "info", "Email delivery provider accepted request", {
@@ -1380,7 +1386,7 @@ export function buildEmailStep() {
             is_test_send: testModeEnabled,
             render_mode: "text/plain",
             subject,
-            body_html: finalBodyText,
+            body_html: finalBodyTextWithSignature,
             sent_at: nowIso,
             template_version_id: templateVersionId,
             variant_id: variantId,

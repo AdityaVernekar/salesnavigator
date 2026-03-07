@@ -3,9 +3,11 @@ import { supabaseServer } from "@/lib/supabase/server";
 
 interface RawWithData {
   threadId?: string;
+  thread_id?: string;
   messages?: unknown[];
   data?: {
     threadId?: string;
+    thread_id?: string;
     messages?: unknown[];
   };
 }
@@ -16,7 +18,7 @@ export async function sendEmailWithComposio(
   subject: string,
   bodyHtml: string,
   bodyText?: string,
-  options?: { forceTextMode?: boolean },
+  options?: { forceTextMode?: boolean; threadId?: string },
 ): Promise<{ threadId?: string; raw: unknown; mode: "html" | "text" }> {
   const { data: account } = await supabaseServer
     .from("email_accounts")
@@ -31,6 +33,73 @@ export async function sendEmailWithComposio(
   let raw: unknown;
   let mode: "html" | "text" = "html";
   const forceTextMode = Boolean(options?.forceTextMode);
+  const replyThreadId = options?.threadId?.trim();
+
+  const extractThreadId = (value: unknown) => {
+    const response = value as RawWithData;
+    return (
+      response.threadId ??
+      response.thread_id ??
+      response.data?.threadId ??
+      response.data?.thread_id
+    );
+  };
+
+  if (replyThreadId) {
+    if (forceTextMode) {
+      mode = "text";
+      raw = await executeComposioTool(
+        "GMAIL_REPLY_TO_THREAD",
+        account.composio_user_id,
+        {
+          thread_id: replyThreadId,
+          recipient_email: to,
+          message_body: (bodyText?.trim() || bodyHtml).trim(),
+          is_html: false,
+        },
+        account.composio_connected_account_id ?? undefined,
+      );
+      return {
+        threadId: extractThreadId(raw) ?? replyThreadId,
+        raw,
+        mode,
+      };
+    }
+
+    try {
+      raw = await executeComposioTool(
+        "GMAIL_REPLY_TO_THREAD",
+        account.composio_user_id,
+        {
+          thread_id: replyThreadId,
+          recipient_email: to,
+          message_body: bodyHtml,
+          is_html: true,
+        },
+        account.composio_connected_account_id ?? undefined,
+      );
+    } catch (error) {
+      if (!bodyText?.trim().length) throw error;
+      mode = "text";
+      raw = await executeComposioTool(
+        "GMAIL_REPLY_TO_THREAD",
+        account.composio_user_id,
+        {
+          thread_id: replyThreadId,
+          recipient_email: to,
+          message_body: bodyText,
+          is_html: false,
+        },
+        account.composio_connected_account_id ?? undefined,
+      );
+    }
+
+    return {
+      threadId: extractThreadId(raw) ?? replyThreadId,
+      raw,
+      mode,
+    };
+  }
 
   if (forceTextMode) {
     mode = "text";
@@ -41,13 +110,12 @@ export async function sendEmailWithComposio(
         to,
         subject,
         body: (bodyText?.trim() || bodyHtml).trim(),
-        content_type: "text/plain",
+        is_html: false,
       },
       account.composio_connected_account_id ?? undefined,
     );
-    const response = raw as RawWithData;
     return {
-      threadId: response.threadId ?? response.data?.threadId,
+      threadId: extractThreadId(raw),
       raw,
       mode,
     };
@@ -61,7 +129,7 @@ export async function sendEmailWithComposio(
         to,
         subject,
         body: bodyHtml,
-        content_type: "text/html",
+        is_html: true,
       },
       account.composio_connected_account_id ?? undefined,
     );
@@ -75,15 +143,14 @@ export async function sendEmailWithComposio(
         to,
         subject,
         body: bodyText,
-        content_type: "text/plain",
+        is_html: false,
       },
       account.composio_connected_account_id ?? undefined,
     );
   }
 
-  const response = raw as RawWithData;
   return {
-    threadId: response.threadId ?? response.data?.threadId,
+    threadId: extractThreadId(raw),
     raw,
     mode,
   };
