@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import { ContactsEditableTable } from "@/components/leads/contacts-editable-table";
+import { LeadEmailActivity } from "@/components/leads/lead-email-activity";
 import { LeadCompanyDetails } from "@/components/leads/lead-company-details";
 import { LeadDetailActions } from "@/components/leads/lead-detail-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireCurrentUserCompany } from "@/lib/auth/user-company";
+import { listLeadEmailActivity } from "@/lib/inbox/service";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +72,82 @@ export default async function LeadDetailPage({
     (scores ?? []).map((score) => [score.contact_id, score]),
   );
 
+  const [activity, templatesResult, mailboxesResult] = await Promise.all([
+    lead?.id
+      ? listLeadEmailActivity({
+          companyId,
+          leadId: lead.id,
+          limit: 200,
+        })
+      : Promise.resolve([]),
+    supabase
+      .from("email_templates")
+      .select("id,name,active_version_id,status")
+      .eq("company_id", companyId)
+      .eq("status", "active")
+      .order("updated_at", { ascending: false }),
+    supabase
+      .from("email_accounts")
+      .select("id,gmail_address")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .eq("connection_status", "connected")
+      .order("gmail_address", { ascending: true }),
+  ]);
+  if (templatesResult.error) {
+    throw new Error(templatesResult.error.message);
+  }
+  if (mailboxesResult.error) {
+    throw new Error(mailboxesResult.error.message);
+  }
+
+  const activeVersionIds = (templatesResult.data ?? [])
+    .map((item) => item.active_version_id)
+    .filter((value): value is string => Boolean(value));
+  const templateVersionRows = activeVersionIds.length
+    ? await supabase
+        .from("email_template_versions")
+        .select("id,template_id,version,subject_template,body_template")
+        .eq("company_id", companyId)
+        .in("id", activeVersionIds)
+        .then((result) => {
+          if (result.error) throw new Error(result.error.message);
+          return result.data ?? [];
+        })
+    : [];
+  const templateRows = templatesResult.data ?? [];
+  const mailboxRows = mailboxesResult.data ?? [];
+
+  const templateByVersionId = new Map(templateVersionRows.map((version) => [version.id, version]));
+  const templateOptions = templateRows
+    .map((template) => {
+      const activeVersion = template.active_version_id
+        ? templateByVersionId.get(template.active_version_id)
+        : null;
+      if (!activeVersion) return null;
+      return {
+        id: template.id,
+        name: template.name ?? "Untitled template",
+        versionId: activeVersion.id,
+        version: activeVersion.version,
+        subjectTemplate: activeVersion.subject_template,
+        bodyTemplate: activeVersion.body_template,
+      };
+    })
+    .filter((item): item is {
+      id: string;
+      name: string;
+      versionId: string;
+      version: number;
+      subjectTemplate: string;
+      bodyTemplate: string;
+    } => Boolean(item));
+
+  const mailboxOptions = mailboxRows.map((item) => ({
+    id: item.id,
+    gmailAddress: item.gmail_address ?? "",
+  }));
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">
@@ -120,6 +198,24 @@ export default async function LeadDetailPage({
           />
         )}
       </div>
+
+      {lead?.id ? (
+        <LeadEmailActivity
+          leadId={lead.id}
+          activity={activity}
+          contacts={(contacts ?? [])
+            .filter((contact) => Boolean(contact.email))
+            .map((contact) => ({
+              id: contact.id,
+              name: contact.name ?? "",
+              email: contact.email ?? "",
+              companyName: contact.company_name ?? lead.company_name ?? "",
+              headline: contact.headline ?? "",
+            }))}
+          templates={templateOptions}
+          mailboxes={mailboxOptions}
+        />
+      ) : null}
     </div>
   );
 }

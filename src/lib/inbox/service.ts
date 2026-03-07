@@ -35,6 +35,62 @@ export type InboxItem = {
   renderMode: string;
 };
 
+export type LeadEmailActivityItem = {
+  id: string;
+  contactId: string | null;
+  contactName: string;
+  contactEmail: string;
+  companyName: string;
+  enrollmentId: string | null;
+  enrollmentStatus: string;
+  enrollmentStep: number | null;
+  nextStepAt: string | null;
+  accountId: string | null;
+  accountAddress: string;
+  threadId: string;
+  toEmail: string;
+  originalToEmail: string;
+  subject: string;
+  classification: string;
+  sentAt: string;
+  repliedAt: string | null;
+  lastReplyAt: string | null;
+  replyFromEmail: string | null;
+  replySnippet: string | null;
+  templateVersionId: string | null;
+  isTestSend: boolean;
+  renderMode: string;
+};
+
+type SupabaseLeadEmailRow = {
+  id: string;
+  contact_id: string | null;
+  contact?:
+    | { name: string | null; email: string | null; company_name: string | null }
+    | Array<{ name: string | null; email: string | null; company_name: string | null }>
+    | null;
+  enrollment_id: string | null;
+  enrollment?:
+    | { status: string | null; current_step: number | null; next_step_at: string | null }
+    | Array<{ status: string | null; current_step: number | null; next_step_at: string | null }>
+    | null;
+  account_id: string | null;
+  account?: { gmail_address: string | null } | Array<{ gmail_address: string | null }> | null;
+  gmail_thread_id: string | null;
+  to_email: string | null;
+  original_to_email: string | null;
+  subject: string | null;
+  classification: string | null;
+  sent_at: string | null;
+  replied_at: string | null;
+  last_reply_at: string | null;
+  reply_from_email: string | null;
+  reply_snippet: string | null;
+  template_version_id: string | null;
+  is_test_send: boolean | null;
+  render_mode: string | null;
+};
+
 type SupabaseInboxRow = {
   id: string;
   campaign_id: string | null;
@@ -63,6 +119,69 @@ type SupabaseInboxRow = {
 function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+export async function listLeadEmailActivity(input: {
+  companyId: string;
+  leadId: string;
+  limit?: number;
+}): Promise<LeadEmailActivityItem[]> {
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 200);
+  const { data: leadContacts, error: leadContactsError } = await supabaseServer
+    .from("contacts")
+    .select("id")
+    .eq("company_id", input.companyId)
+    .eq("lead_id", input.leadId)
+    .limit(1000);
+  if (leadContactsError) throw new Error(leadContactsError.message);
+
+  const contactIds = (leadContacts ?? []).map((item) => item.id);
+  if (!contactIds.length) return [];
+
+  const { data, error } = await supabaseServer
+    .from("emails_sent")
+    .select(
+      "id,contact_id,contact:contacts(name,email,company_name),enrollment_id,enrollment:enrollments(status,current_step,next_step_at),account_id,account:email_accounts(gmail_address),gmail_thread_id,to_email,original_to_email,subject,classification,sent_at,replied_at,last_reply_at,reply_from_email,reply_snippet,template_version_id,is_test_send,render_mode",
+    )
+    .eq("company_id", input.companyId)
+    .in("contact_id", contactIds)
+    .order("sent_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as SupabaseLeadEmailRow[];
+  return rows.map((row) => {
+    const contact = unwrapRelation(row.contact);
+    const enrollment = unwrapRelation(row.enrollment);
+    const account = unwrapRelation(row.account);
+    return {
+      id: row.id,
+      contactId: row.contact_id,
+      contactName: contact?.name ?? "",
+      contactEmail: contact?.email ?? "",
+      companyName: contact?.company_name ?? "",
+      enrollmentId: row.enrollment_id,
+      enrollmentStatus: enrollment?.status ?? "unknown",
+      enrollmentStep: enrollment?.current_step ?? null,
+      nextStepAt: enrollment?.next_step_at ?? null,
+      accountId: row.account_id,
+      accountAddress: account?.gmail_address ?? "",
+      threadId: row.gmail_thread_id ?? "",
+      toEmail: row.to_email ?? "",
+      originalToEmail: row.original_to_email ?? "",
+      subject: row.subject ?? "",
+      classification: row.classification ?? "UNCLASSIFIED",
+      sentAt: row.sent_at ?? "",
+      repliedAt: row.replied_at,
+      lastReplyAt: row.last_reply_at,
+      replyFromEmail: row.reply_from_email,
+      replySnippet: row.reply_snippet,
+      templateVersionId: row.template_version_id,
+      isTestSend: Boolean(row.is_test_send),
+      renderMode: row.render_mode ?? "unknown",
+    };
+  });
 }
 
 export async function listInboxItems(query: InboxQuery): Promise<{ items: InboxItem[]; nextCursor: string | null }> {
