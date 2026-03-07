@@ -112,7 +112,29 @@ export const exaResearchTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
-    const result = await (exa as any).research(inputData.query);
-    return { result };
+    const researchApi = (exa as any).research;
+
+    // Exa SDK >=2.7 exposes `research` as a client (create + poll),
+    // while older/internal wrappers may have a callable `research(...)`.
+    if (typeof researchApi === "function") {
+      const result = await researchApi(inputData.query);
+      return { result };
+    }
+
+    if (researchApi && typeof researchApi.create === "function" && typeof researchApi.pollUntilFinished === "function") {
+      const created = await researchApi.create({
+        instructions: inputData.query,
+      });
+
+      const result = await researchApi.pollUntilFinished(created.researchId, {
+        pollInterval: 1500,
+        timeoutMs: 120000,
+      });
+      return { result };
+    }
+
+    // Graceful fallback so agents still get useful output if Research API is unavailable.
+    const fallback = await exa.answer(inputData.query, { text: true });
+    return { result: fallback };
   },
 });

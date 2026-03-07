@@ -45,6 +45,8 @@ services:
         CRON_SECRET: ${CRON_SECRET}
     image: salesnav:local
     command: npm run worker:nest
+    environment:
+      NODE_OPTIONS: --max-old-space-size=4096
     ports:
       - "4010:4010"
     env_file:
