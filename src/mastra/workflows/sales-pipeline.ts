@@ -13,7 +13,7 @@ import {
 } from "@/lib/pipeline/stages";
 import { supabaseServer } from "@/lib/supabase/server";
 import { withRetries } from "@/lib/pipeline/retry";
-import { buildRuntimeAgent } from "@/lib/agents/build-runtime-agent";
+import { buildRuntimeAgent, type RuntimeAgentResolution } from "@/lib/agents/build-runtime-agent";
 import { env } from "@/lib/config/env";
 import { selectSendingAccount } from "@/lib/email/router";
 import { sendEmailWithComposio } from "@/lib/composio/gmail";
@@ -101,6 +101,13 @@ function getLeadIdsFilter(runConfig: { leadIds?: string[] } | undefined): string
   return ids;
 }
 
+/** Contact IDs when running pipeline on selected contacts only. */
+function getContactIdsFilter(runConfig: { contactIds?: string[] } | undefined): string[] | undefined {
+  const ids = runConfig?.contactIds;
+  if (!ids?.length) return undefined;
+  return ids;
+}
+
 function takeWithLimit<T>(items: T[], limit?: number) {
   if (!limit || limit < 1) return items;
   return items.slice(0, limit);
@@ -166,6 +173,126 @@ async function consumeAgentStream(
     reasoningPreview: previewValue(reasoningBuffer, 3000),
     responsePreview: previewValue(textBuffer, 3000),
   });
+}
+
+type DiscoverySource = "clado" | "exa";
+
+type SourceFallbackAttempt = {
+  source: DiscoverySource;
+  requestedToolKeys: string[];
+  status: "success" | "empty" | "error";
+  itemCount: number;
+  configVersionId?: string | null;
+  toolsEnabled?: string[];
+  toolsRejected?: string[];
+  error?: string;
+};
+
+type SourceFallbackBranch<T> = {
+  source: DiscoverySource;
+  requestedToolKeys: string[];
+  execute: (runtime: RuntimeAgentResolution) => Promise<T[]>;
+  hasData?: (items: T[]) => boolean;
+};
+
+async function runSourceFallback<T>(input: {
+  runId: string;
+  agentType: "people_gen" | "enrichment";
+  stage: "people_discovery" | "enrichment";
+  branches: SourceFallbackBranch<T>[];
+}) {
+  const attempts: SourceFallbackAttempt[] = [];
+
+  for (const branch of input.branches) {
+    await logRunEvent(
+      input.runId,
+      input.agentType,
+      "info",
+      `${branch.source.toUpperCase()} branch started`,
+      {
+        stage: input.stage,
+        source: branch.source,
+        requestedToolKeys: branch.requestedToolKeys,
+      },
+    );
+
+    try {
+      const runtime = await buildRuntimeAgent(input.agentType, {
+        requestedToolKeys: branch.requestedToolKeys,
+      });
+      const items = await branch.execute(runtime);
+      const hasData = branch.hasData ? branch.hasData(items) : items.length > 0;
+      const attempt: SourceFallbackAttempt = {
+        source: branch.source,
+        requestedToolKeys: branch.requestedToolKeys,
+        status: hasData ? "success" : "empty",
+        itemCount: items.length,
+        configVersionId: runtime.config.configVersionId,
+        toolsEnabled: runtime.toolKeys,
+        toolsRejected: runtime.rejectedToolKeys,
+      };
+      attempts.push(attempt);
+
+      if (!hasData) {
+        await logRunEvent(
+          input.runId,
+          input.agentType,
+          "warn",
+          `${branch.source.toUpperCase()} branch returned no usable data`,
+          {
+            stage: input.stage,
+            source: branch.source,
+            itemCount: items.length,
+            requestedToolKeys: branch.requestedToolKeys,
+            configVersionId: runtime.config.configVersionId,
+            toolsEnabled: runtime.toolKeys,
+            toolsRejected: runtime.rejectedToolKeys,
+          },
+        );
+        continue;
+      }
+
+      await logRunEvent(
+        input.runId,
+        input.agentType,
+        "success",
+        `${branch.source.toUpperCase()} branch selected`,
+        {
+          stage: input.stage,
+          source: branch.source,
+          itemCount: items.length,
+          requestedToolKeys: branch.requestedToolKeys,
+          configVersionId: runtime.config.configVersionId,
+          toolsEnabled: runtime.toolKeys,
+          toolsRejected: runtime.rejectedToolKeys,
+        },
+      );
+      return { items, sourceUsed: branch.source, attempts };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      attempts.push({
+        source: branch.source,
+        requestedToolKeys: branch.requestedToolKeys,
+        status: "error",
+        itemCount: 0,
+        error: errorMessage,
+      });
+      await logRunEvent(
+        input.runId,
+        input.agentType,
+        "warn",
+        `${branch.source.toUpperCase()} branch failed; trying fallback`,
+        {
+          stage: input.stage,
+          source: branch.source,
+          requestedToolKeys: branch.requestedToolKeys,
+          error: errorMessage,
+        },
+      );
+    }
+  }
+
+  throw new Error(`All ${input.stage} source branches failed or returned no usable data`);
 }
 
 const personalizedEmailDraftSchema = z.object({
@@ -298,6 +425,10 @@ export function buildLeadGenStep() {
 }
 
 export function buildPeopleGenStep() {
+  type DiscoveredPerson = z.infer<typeof peopleOutputSchema>["people"][number] & {
+    source: DiscoverySource;
+  };
+
   return createStep({
   id: "people-gen-step",
   inputSchema: peopleDiscoveryInputSchema,
@@ -356,27 +487,61 @@ export function buildPeopleGenStep() {
       );
       const knownLeadIds = new Set(leadIds);
 
-      const peopleGenRuntime = await buildRuntimeAgent("people_gen");
-      await updateRunState(inputData.runId, { config_version_id: peopleGenRuntime.config.configVersionId });
-      const result = await withRetries(async () => {
-        const stream = await peopleGenRuntime.agent.stream(
-          peopleGenRuntime.preparePrompt(
-            [
-              `Campaign ICP: ${campaign?.icp_description ?? ""}`,
-              `Target roles: ${(campaign?.target_roles ?? []).join(", ")}`,
-              `Find contacts in these companies: ${JSON.stringify(leads)}`,
-            ].join("\n"),
-          ),
-          { structuredOutput: { schema: peopleOutputSchema }, maxSteps: 10 },
-        );
-        await consumeAgentStream(stream, inputData.runId, "people_gen");
-        return { object: await stream.object };
-      });
+      const discoveryPrompt = [
+        `Campaign ICP: ${campaign?.icp_description ?? ""}`,
+        `Target roles: ${(campaign?.target_roles ?? []).join(", ")}`,
+        `Find contacts in these companies: ${JSON.stringify(leads)}`,
+      ].join("\n");
+
+      const discoveryResult = await withRetries(async () =>
+        runSourceFallback<DiscoveredPerson>({
+          runId: inputData.runId,
+          agentType: "people_gen",
+          stage: "people_discovery",
+          branches: [
+            {
+              source: "clado",
+              requestedToolKeys: ["clado.search_people", "clado.deep_research"],
+              execute: async (runtime) => {
+                const stream = await runtime.agent.stream(runtime.preparePrompt(discoveryPrompt), {
+                  structuredOutput: { schema: peopleOutputSchema },
+                  maxSteps: 10,
+                });
+                await consumeAgentStream(stream, inputData.runId, "people_gen");
+                const object = await stream.object;
+                return object.people.map((person) => ({ ...person, source: "clado" as const }));
+              },
+              hasData: (items) => items.some((person) => knownLeadIds.has(person.lead_id)),
+            },
+            {
+              source: "exa",
+              requestedToolKeys: ["exa.search", "exa.research"],
+              execute: async (runtime) => {
+                const stream = await runtime.agent.stream(runtime.preparePrompt(discoveryPrompt), {
+                  structuredOutput: { schema: peopleOutputSchema },
+                  maxSteps: 10,
+                });
+                await consumeAgentStream(stream, inputData.runId, "people_gen");
+                const object = await stream.object;
+                return object.people.map((person) => ({ ...person, source: "exa" as const }));
+              },
+              hasData: (items) => items.some((person) => knownLeadIds.has(person.lead_id)),
+            },
+          ],
+        }),
+      );
+
+      const resultPeople = discoveryResult.items;
+      if (discoveryResult.attempts[0]?.configVersionId) {
+        await updateRunState(inputData.runId, {
+          config_version_id: discoveryResult.attempts[0].configVersionId,
+        });
+      }
 
       const seenBatchKeys = new Set<string>();
       const maxContacts = inputData.runConfig?.peopleDiscovery?.maxContacts;
       const contactsToInsert = takeWithLimit(
-        result.object.people
+        resultPeople
         .filter((person) => knownLeadIds.has(person.lead_id))
         .filter((person) => {
           const key = contactKey(person);
@@ -396,8 +561,8 @@ export function buildPeopleGenStep() {
           linkedin_url: person.linkedin_url ?? null,
           headline: person.headline ?? null,
           company_name: person.company_name ?? null,
-          clado_profile: safeParseJson(person.raw_data),
-          exa_company_signals: {},
+          clado_profile: person.source === "clado" ? safeParseJson(person.raw_data) : {},
+          exa_company_signals: person.source === "exa" ? safeParseJson(person.raw_data) : {},
           contact_brief: null,
         })),
         maxContacts,
@@ -422,10 +587,9 @@ export function buildPeopleGenStep() {
         campaignId: inputData.campaignId,
         peopleDiscovered: contactsToInsert.length,
         runConfiguredContactCap: maxContacts ?? null,
-        contactsDiscardedAsDuplicates: result.object.people.length - contactsToInsert.length,
-        configVersionId: peopleGenRuntime.config.configVersionId,
-        toolsEnabled: peopleGenRuntime.toolKeys,
-        toolsRejected: peopleGenRuntime.rejectedToolKeys,
+        contactsDiscardedAsDuplicates: resultPeople.length - contactsToInsert.length,
+        sourceUsed: discoveryResult.sourceUsed,
+        sourceAttempts: discoveryResult.attempts,
         durationMs: Date.now() - startedAt,
       });
 
@@ -464,6 +628,7 @@ export function buildEnrichmentStep() {
 
     try {
       const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
+      const contactIdsFilter = getContactIdsFilter(inputData.runConfig);
       let contactsToEnrichQuery = supabaseServer
         .from("contacts")
         .select("id,lead_id,name,first_name,linkedin_url,headline,company_name")
@@ -471,6 +636,9 @@ export function buildEnrichmentStep() {
         .is("enriched_at", null);
       if (leadIdsFilter?.length) {
         contactsToEnrichQuery = contactsToEnrichQuery.in("lead_id", leadIdsFilter);
+      }
+      if (contactIdsFilter?.length) {
+        contactsToEnrichQuery = contactsToEnrichQuery.in("id", contactIdsFilter);
       }
       const { data: contactsToEnrich } = await contactsToEnrichQuery;
       const maxContacts = inputData.runConfig?.enrichment?.maxContacts;
@@ -484,6 +652,9 @@ export function buildEnrichmentStep() {
           .is("enriched_at", null);
         if (leadIdsFilter?.length) {
           unenrichedQuery = unenrichedQuery.in("lead_id", leadIdsFilter);
+        }
+        if (contactIdsFilter?.length) {
+          unenrichedQuery = unenrichedQuery.in("id", contactIdsFilter);
         }
         const { data: leadsWithUnenrichedContacts } = await unenrichedQuery;
         const blockedLeadIds = new Set((leadsWithUnenrichedContacts ?? []).map((contact) => contact.lead_id));
@@ -517,21 +688,50 @@ export function buildEnrichmentStep() {
         return { ...inputData, leadsEnriched: 0 };
       }
 
-      const enrichmentRuntime = await buildRuntimeAgent("enrichment");
-      await updateRunState(inputData.runId, { config_version_id: enrichmentRuntime.config.configVersionId });
-      const result = await withRetries(async () => {
-        const stream = await enrichmentRuntime.agent.stream(
-          enrichmentRuntime.preparePrompt(
-            `Enrich these people candidates: ${JSON.stringify(limitedContactsToEnrich)}`,
-          ),
-          {
-            structuredOutput: { schema: contactsOutputSchema },
-            maxSteps: 8,
-          },
-        );
-        await consumeAgentStream(stream, inputData.runId, "enrichment");
-        return { object: await stream.object };
-      });
+      const enrichmentPrompt = `Enrich these people candidates: ${JSON.stringify(limitedContactsToEnrich)}`;
+      const knownLeadIds = new Set(limitedContactsToEnrich.map((contact) => contact.lead_id));
+      const enrichmentResult = await withRetries(async () =>
+        runSourceFallback<z.infer<typeof contactsOutputSchema>["contacts"][number]>({
+          runId: inputData.runId,
+          agentType: "enrichment",
+          stage: "enrichment",
+          branches: [
+            {
+              source: "clado",
+              requestedToolKeys: ["clado.get_profile", "clado.enrich_contact"],
+              execute: async (runtime) => {
+                const stream = await runtime.agent.stream(runtime.preparePrompt(enrichmentPrompt), {
+                  structuredOutput: { schema: contactsOutputSchema },
+                  maxSteps: 8,
+                });
+                await consumeAgentStream(stream, inputData.runId, "enrichment");
+                const object = await stream.object;
+                return object.contacts;
+              },
+              hasData: (items) => items.some((contact) => knownLeadIds.has(contact.lead_id)),
+            },
+            {
+              source: "exa",
+              requestedToolKeys: ["exa.search_contents"],
+              execute: async (runtime) => {
+                const stream = await runtime.agent.stream(runtime.preparePrompt(enrichmentPrompt), {
+                  structuredOutput: { schema: contactsOutputSchema },
+                  maxSteps: 8,
+                });
+                await consumeAgentStream(stream, inputData.runId, "enrichment");
+                const object = await stream.object;
+                return object.contacts;
+              },
+              hasData: (items) => items.some((contact) => knownLeadIds.has(contact.lead_id)),
+            },
+          ],
+        }),
+      );
+      if (enrichmentResult.attempts[0]?.configVersionId) {
+        await updateRunState(inputData.runId, {
+          config_version_id: enrichmentResult.attempts[0].configVersionId,
+        });
+      }
 
       const contactsByLead = new Map<string, typeof limitedContactsToEnrich>();
       for (const contact of limitedContactsToEnrich) {
@@ -548,7 +748,7 @@ export function buildEnrichmentStep() {
         patch: Record<string, unknown>;
       }> = [];
 
-      for (const enriched of result.object.contacts) {
+      for (const enriched of enrichmentResult.items) {
         const candidates = contactsByLead.get(enriched.lead_id) ?? [];
         if (!candidates.length) continue;
 
@@ -611,9 +811,8 @@ export function buildEnrichmentStep() {
         campaignId: inputData.campaignId,
         leadsEnriched: matchedUpdates.length,
         runConfiguredContactCap: maxContacts ?? null,
-        configVersionId: enrichmentRuntime.config.configVersionId,
-        toolsEnabled: enrichmentRuntime.toolKeys,
-        toolsRejected: enrichmentRuntime.rejectedToolKeys,
+        sourceUsed: enrichmentResult.sourceUsed,
+        sourceAttempts: enrichmentResult.attempts,
         durationMs: Date.now() - startedAt,
       });
 
@@ -652,6 +851,7 @@ export function buildScoringStep() {
 
     try {
       const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
+      const contactIdsFilter = getContactIdsFilter(inputData.runConfig);
       let contactsQuery = supabaseServer
         .from("contacts")
         .select("id,lead_id,name,email,email_verified,headline,company_name,contact_brief,exa_company_signals")
@@ -659,6 +859,9 @@ export function buildScoringStep() {
         .not("enriched_at", "is", null);
       if (leadIdsFilter?.length) {
         contactsQuery = contactsQuery.in("lead_id", leadIdsFilter);
+      }
+      if (contactIdsFilter?.length) {
+        contactsQuery = contactsQuery.in("id", contactIdsFilter);
       }
       const { data: contacts } = await contactsQuery;
 
@@ -851,6 +1054,7 @@ export function buildEmailStep() {
       }
 
       const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
+      const contactIdsFilter = getContactIdsFilter(inputData.runConfig);
       const { data: hotOrWarmScores } = await supabaseServer
         .from("icp_scores")
         .select("contact_id,tier,recommended_angle")
@@ -859,6 +1063,10 @@ export function buildEmailStep() {
         .in("tier", ["hot", "warm"]);
 
       let scoresToUse = hotOrWarmScores ?? [];
+      if (contactIdsFilter?.length && scoresToUse.length) {
+        const allowedContactIds = new Set(contactIdsFilter);
+        scoresToUse = scoresToUse.filter((score) => allowedContactIds.has(score.contact_id));
+      }
       if (leadIdsFilter?.length && scoresToUse.length) {
         const contactIds = [...new Set(scoresToUse.map((s) => s.contact_id))];
         const { data: contactsForLeads } = await supabaseServer

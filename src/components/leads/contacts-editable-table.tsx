@@ -5,6 +5,14 @@ import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { TruncatedTextModal } from "@/components/leads/truncated-text-modal";
 import {
   Table,
@@ -28,6 +36,8 @@ export interface EditableContactRow {
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+type ContactTier = "hot" | "warm" | "cold" | "disqualified";
+const TIER_OPTIONS: ContactTier[] = ["hot", "warm", "cold", "disqualified"];
 
 export function ContactsEditableTable({
   contacts,
@@ -38,31 +48,25 @@ export function ContactsEditableTable({
   const [isEditing, setIsEditing] = useState(false);
   const [statusById, setStatusById] = useState<Record<string, SaveStatus>>({});
   const [errorById, setErrorById] = useState<Record<string, string | null>>({});
+  const [dirtyById, setDirtyById] = useState<Record<string, boolean>>({});
   const rowsRef = useRef(rows);
-  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const versionRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     setRows(contacts);
+    setDirtyById({});
+    setStatusById({});
+    setErrorById({});
   }, [contacts]);
 
   useEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
 
-  useEffect(() => {
-    const timers = timersRef.current;
-    return () => {
-      Object.values(timers).forEach((timer) => clearTimeout(timer));
-    };
-  }, []);
-
   async function saveRow(contactId: string) {
+    if (!dirtyById[contactId]) return true;
     const row = rowsRef.current.find((item) => item.id === contactId);
-    if (!row) return;
+    if (!row) return true;
 
-    const currentVersion = (versionRef.current[contactId] ?? 0) + 1;
-    versionRef.current[contactId] = currentVersion;
     setStatusById((prev) => ({ ...prev, [contactId]: "saving" }));
     setErrorById((prev) => ({ ...prev, [contactId]: null }));
 
@@ -76,6 +80,9 @@ export function ContactsEditableTable({
           headline: row.headline,
           linkedin_url: row.linkedinUrl,
           company_name: row.company,
+          score: row.score,
+          tier: row.tier,
+          reasoning: row.reasoning,
         }),
       });
 
@@ -89,14 +96,15 @@ export function ContactsEditableTable({
           headline: string | null;
           linkedin_url: string | null;
           company_name: string | null;
+          score: number | null;
+          tier: string | null;
+          reasoning: string | null;
         };
       };
 
       if (!response.ok || !payload.ok || !payload.contact) {
         throw new Error(payload.error ?? "Failed to save contact");
       }
-
-      if (versionRef.current[contactId] !== currentVersion) return;
 
       setRows((prev) =>
         prev.map((item) =>
@@ -108,51 +116,47 @@ export function ContactsEditableTable({
                 headline: payload.contact?.headline ?? "",
                 linkedinUrl: payload.contact?.linkedin_url ?? "",
                 company: payload.contact?.company_name ?? "",
+                score:
+                  typeof payload.contact?.score === "number"
+                    ? payload.contact.score
+                    : null,
+                tier: payload.contact?.tier ?? null,
+                reasoning: payload.contact?.reasoning ?? null,
               }
             : item,
         ),
       );
       setStatusById((prev) => ({ ...prev, [contactId]: "saved" }));
-
-      setTimeout(() => {
-        setStatusById((prev) =>
-          prev[contactId] === "saved" ? { ...prev, [contactId]: "idle" } : prev,
-        );
-      }, 1200);
+      setDirtyById((prev) => ({ ...prev, [contactId]: false }));
+      return true;
     } catch (error) {
-      if (versionRef.current[contactId] !== currentVersion) return;
       setStatusById((prev) => ({ ...prev, [contactId]: "error" }));
       setErrorById((prev) => ({
         ...prev,
         [contactId]: error instanceof Error ? error.message : "Save failed",
       }));
+      return false;
     }
-  }
-
-  function queueSave(contactId: string) {
-    if (timersRef.current[contactId]) {
-      clearTimeout(timersRef.current[contactId]);
-    }
-    timersRef.current[contactId] = setTimeout(() => {
-      void saveRow(contactId);
-    }, 700);
   }
 
   function updateField(
     contactId: string,
     field: keyof EditableContactRow,
-    value: string,
+    value: EditableContactRow[keyof EditableContactRow],
   ) {
     setRows((prev) =>
       prev.map((row) =>
         row.id === contactId ? { ...row, [field]: value } : row,
       ),
     );
-    queueSave(contactId);
+    setDirtyById((prev) => ({ ...prev, [contactId]: true }));
+    setStatusById((prev) => ({ ...prev, [contactId]: "idle" }));
+    setErrorById((prev) => ({ ...prev, [contactId]: null }));
   }
 
   function statusLabel(contactId: string) {
     const status = statusById[contactId] ?? "idle";
+    if (status === "idle" && dirtyById[contactId]) return "Unsaved";
     if (status === "saving") return "Saving...";
     if (status === "saved") return "Saved";
     if (status === "error") return "Error";
@@ -165,6 +169,32 @@ export function ContactsEditableTable({
     return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   }
 
+  async function handleEditToggle() {
+    if (!isEditing) {
+      setIsEditing(true);
+      return;
+    }
+
+    const dirtyIds = rowsRef.current
+      .map((row) => row.id)
+      .filter((id) => dirtyById[id]);
+
+    if (!dirtyIds.length) {
+      setIsEditing(false);
+      return;
+    }
+
+    let allSaved = true;
+    for (const id of dirtyIds) {
+      const ok = await saveRow(id);
+      if (!ok) allSaved = false;
+    }
+
+    if (allSaved) {
+      setIsEditing(false);
+    }
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex justify-end">
@@ -172,7 +202,7 @@ export function ContactsEditableTable({
           type="button"
           size="sm"
           variant={isEditing ? "secondary" : "outline"}
-          onClick={() => setIsEditing((prev) => !prev)}
+          onClick={() => void handleEditToggle()}
         >
           {isEditing ? "Done" : "Edit"}
         </Button>
@@ -202,7 +232,6 @@ export function ContactsEditableTable({
                     onChange={(event) =>
                       updateField(row.id, "name", event.target.value)
                     }
-                    onBlur={() => void saveRow(row.id)}
                   />
                 ) : (
                   row.name || "--"
@@ -216,7 +245,6 @@ export function ContactsEditableTable({
                     onChange={(event) =>
                       updateField(row.id, "company", event.target.value)
                     }
-                    onBlur={() => void saveRow(row.id)}
                   />
                 ) : (
                   row.company || "--"
@@ -231,7 +259,6 @@ export function ContactsEditableTable({
                     onChange={(event) =>
                       updateField(row.id, "email", event.target.value)
                     }
-                    onBlur={() => void saveRow(row.id)}
                   />
                 ) : row.email ? (
                   <a
@@ -254,7 +281,6 @@ export function ContactsEditableTable({
                     onChange={(event) =>
                       updateField(row.id, "headline", event.target.value)
                     }
-                    onBlur={() => void saveRow(row.id)}
                   />
                 ) : (
                   <TruncatedTextModal
@@ -275,7 +301,6 @@ export function ContactsEditableTable({
                     onChange={(event) =>
                       updateField(row.id, "linkedinUrl", event.target.value)
                     }
-                    onBlur={() => void saveRow(row.id)}
                   />
                 ) : row.linkedinUrl ? (
                   <a
@@ -293,10 +318,57 @@ export function ContactsEditableTable({
                 )}
               </TableCell>
               <TableCell>
-                {typeof row.score === "number" ? row.score : "--"}
+                {isEditing ? (
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={
+                      typeof row.score === "number" ? String(row.score) : ""
+                    }
+                    placeholder="0-100"
+                    onChange={(event) => {
+                      const next = event.target.value.trim();
+                      if (!next) {
+                        updateField(row.id, "score", null);
+                        return;
+                      }
+                      const parsed = Number(next);
+                      if (Number.isFinite(parsed)) {
+                        const clamped = Math.min(
+                          100,
+                          Math.max(0, Math.round(parsed)),
+                        );
+                        updateField(row.id, "score", clamped);
+                      }
+                    }}
+                  />
+                ) : typeof row.score === "number" ? (
+                  row.score
+                ) : (
+                  "--"
+                )}
               </TableCell>
               <TableCell>
-                {row.tier ? (
+                {isEditing ? (
+                  <Select
+                    value={row.tier ?? undefined}
+                    onValueChange={(value) => {
+                      updateField(row.id, "tier", value);
+                    }}
+                  >
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="Select tier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIER_OPTIONS.map((tier) => (
+                        <SelectItem key={tier} value={tier}>
+                          {tier.toUpperCase()}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : row.tier ? (
                   <Badge variant="secondary" className="uppercase">
                     {row.tier}
                   </Badge>
@@ -305,14 +377,25 @@ export function ContactsEditableTable({
                 )}
               </TableCell>
               <TableCell className="max-w-[260px] align-top">
-                <TruncatedTextModal
-                  text={row.reasoning}
-                  fallback="No reasoning available"
-                  modalTitle="Reasoning"
-                  modalDescription={row.name || "Contact"}
-                  previewLength={180}
-                  previewClassName="line-clamp-4 block max-w-[240px] overflow-hidden text-sm leading-5 wrap-break-word"
-                />
+                {isEditing ? (
+                  <Textarea
+                    value={row.reasoning ?? ""}
+                    placeholder="Reasoning"
+                    rows={4}
+                    onChange={(event) =>
+                      updateField(row.id, "reasoning", event.target.value)
+                    }
+                  />
+                ) : (
+                  <TruncatedTextModal
+                    text={row.reasoning}
+                    fallback="No reasoning available"
+                    modalTitle="Reasoning"
+                    modalDescription={row.name || "Contact"}
+                    previewLength={180}
+                    previewClassName="line-clamp-4 block max-w-[240px] overflow-hidden text-sm leading-5 wrap-break-word"
+                  />
+                )}
               </TableCell>
               <TableCell className="space-y-1">
                 <div className="text-xs text-muted-foreground">

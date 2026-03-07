@@ -9,6 +9,9 @@ const contactPatchSchema = z
     headline: z.string().optional(),
     linkedin_url: z.string().url().or(z.literal("")).optional(),
     company_name: z.string().optional(),
+    score: z.number().int().min(0).max(100).nullable().optional(),
+    tier: z.enum(["hot", "warm", "cold", "disqualified"]).nullable().optional(),
+    reasoning: z.string().nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, "At least one field is required");
 
@@ -25,6 +28,11 @@ export async function PATCH(
   try {
     const { id } = await params;
     const parsed = contactPatchSchema.parse(await request.json());
+    const scorePayloadProvided =
+      typeof parsed.score !== "undefined" ||
+      typeof parsed.tier !== "undefined" ||
+      typeof parsed.reasoning !== "undefined";
+
     const payload = {
       name: cleanString(parsed.name),
       email:
@@ -36,7 +44,7 @@ export async function PATCH(
       company_name: cleanString(parsed.company_name),
     };
 
-    const { data, error } = await supabaseServer
+    const { data: contactData, error } = await supabaseServer
       .from("contacts")
       .update(payload)
       .eq("id", id)
@@ -47,7 +55,88 @@ export async function PATCH(
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true, contact: data });
+    let scoreData: { score: number | null; tier: string | null; reasoning: string | null } | null = null;
+
+    if (scorePayloadProvided) {
+      const { data: existingScores, error: existingScoreError } = await supabaseServer
+        .from("icp_scores")
+        .select("id,score,tier,reasoning")
+        .eq("contact_id", id)
+        .order("scored_at", { ascending: false })
+        .limit(1);
+
+      if (existingScoreError) {
+        return NextResponse.json({ ok: false, error: existingScoreError.message }, { status: 400 });
+      }
+
+      const existingScore = existingScores?.[0] ?? null;
+      const nextScore = typeof parsed.score === "number" ? parsed.score : existingScore?.score;
+      const nextTier = typeof parsed.tier === "string" ? parsed.tier : existingScore?.tier;
+      const nextReasoning =
+        typeof parsed.reasoning !== "undefined"
+          ? (parsed.reasoning?.trim() ? parsed.reasoning.trim() : null)
+          : existingScore?.reasoning ?? null;
+
+      if (typeof nextScore === "number" && typeof nextTier === "string") {
+        if (existingScore?.id) {
+          const { error: updateScoreError } = await supabaseServer
+            .from("icp_scores")
+            .update({
+              score: nextScore,
+              tier: nextTier,
+              reasoning: nextReasoning,
+            })
+            .eq("id", existingScore.id);
+          if (updateScoreError) {
+            return NextResponse.json({ ok: false, error: updateScoreError.message }, { status: 400 });
+          }
+        } else {
+          const { error: insertScoreError } = await supabaseServer
+            .from("icp_scores")
+            .insert({
+              contact_id: id,
+              score: nextScore,
+              tier: nextTier,
+              reasoning: nextReasoning,
+            });
+          if (insertScoreError) {
+            return NextResponse.json({ ok: false, error: insertScoreError.message }, { status: 400 });
+          }
+        }
+        scoreData = { score: nextScore, tier: nextTier, reasoning: nextReasoning };
+      } else if (existingScore) {
+        scoreData = {
+          score: existingScore.score ?? null,
+          tier: existingScore.tier ?? null,
+          reasoning: existingScore.reasoning ?? null,
+        };
+      }
+    } else {
+      const { data: existingScores } = await supabaseServer
+        .from("icp_scores")
+        .select("score,tier,reasoning")
+        .eq("contact_id", id)
+        .order("scored_at", { ascending: false })
+        .limit(1);
+      const existingScore = existingScores?.[0] ?? null;
+      scoreData = existingScore
+        ? {
+            score: existingScore.score ?? null,
+            tier: existingScore.tier ?? null,
+            reasoning: existingScore.reasoning ?? null,
+          }
+        : null;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      contact: {
+        ...contactData,
+        score: scoreData?.score ?? null,
+        tier: scoreData?.tier ?? null,
+        reasoning: scoreData?.reasoning ?? null,
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Invalid contact payload" },

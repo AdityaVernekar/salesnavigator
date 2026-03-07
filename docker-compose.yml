@@ -18,9 +18,16 @@ services:
         ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY}
         CRON_SECRET: ${CRON_SECRET}
     image: salesnav:local
-    command: npm run start
+    command: npm run dev -- --hostname 0.0.0.0 --port 3000
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
     ports:
       - "3000:3000"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - /app/.next
     env_file:
       - .env
     restart: unless-stopped
@@ -44,11 +51,15 @@ services:
         ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY}
         CRON_SECRET: ${CRON_SECRET}
     image: salesnav:local
-    command: npm run worker:nest
+    command: npm run worker:nest:dev
     environment:
       NODE_OPTIONS: --max-old-space-size=4096
+      CHOKIDAR_USEPOLLING: "true"
     ports:
       - "4010:4010"
+    volumes:
+      - ./:/app
+      - /app/node_modules
     env_file:
       - .env
     restart: unless-stopped

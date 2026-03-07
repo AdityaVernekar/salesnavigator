@@ -7,6 +7,8 @@ export const pipelineRunConfigSchema = z
   .object({
     /** When set, pipeline stages only process these leads (Clay-style run from leads list). */
     leadIds: z.array(z.string().uuid()).max(500).optional(),
+    /** When set, contact-based stages only process these selected contacts. */
+    contactIds: z.array(z.string().uuid()).max(2000).optional(),
     leadGeneration: z
       .object({
         maxLeads: boundedInt(1, 500),
@@ -57,6 +59,9 @@ export function normalizeRunConfig(
 
   if (parsed.leadIds?.length) {
     normalized.leadIds = parsed.leadIds;
+  }
+  if (parsed.contactIds?.length) {
+    normalized.contactIds = parsed.contactIds;
   }
   for (const stage of EXECUTABLE_PIPELINE_STAGES) {
     if (!selected.has(stage)) continue;

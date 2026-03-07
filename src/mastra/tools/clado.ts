@@ -8,13 +8,26 @@ const authHeaders = {
   Authorization: `Bearer ${env.CLADO_API_KEY}`,
 };
 
+async function readCladoResponse(res: Response) {
+  const data = await res.json().catch(() => null);
+  console.log("data", data);
+  if (!res.ok) {
+    const detail =
+      typeof data === "object" && data !== null && "detail" in data
+        ? String((data as { detail?: unknown }).detail ?? "")
+        : JSON.stringify(data);
+    throw new Error(`Clado API request failed (${res.status}): ${detail.slice(0, 500)}`);
+  }
+  return data;
+}
+
 export const cladoSearchPeopleTool = createTool({
   id: "clado-search-people",
   description: "Searches LinkedIn people with natural-language criteria.",
   inputSchema: z.object({
     query: z.string(),
-    limit: z.number(),
-    agent_filter: z.boolean(),
+    limit: z.number().int().min(1).max(10),
+    advanced_filtering: z.boolean(),
     search_id: z.string().nullable(),
     offset: z.number().nullable(),
   }),
@@ -23,14 +36,16 @@ export const cladoSearchPeopleTool = createTool({
   }),
   execute: async (inputData) => {
     const url = new URL(`${CLADO_BASE}/api/search`);
+    const cappedLimit = Math.min(Math.max(1, inputData.limit), 30);
     url.searchParams.set("query", inputData.query);
-    url.searchParams.set("limit", String(inputData.limit));
-    if (inputData.agent_filter) url.searchParams.set("agent_filter", "true");
+    url.searchParams.set("limit", String(cappedLimit));
+    url.searchParams.set("advanced_filtering", String(inputData.advanced_filtering));
+    url.searchParams.set("legacy", "false");
     if (inputData.search_id) url.searchParams.set("search_id", inputData.search_id);
     if (typeof inputData.offset === "number") url.searchParams.set("offset", String(inputData.offset));
 
     const res = await fetch(url, { headers: authHeaders });
-    const data = await res.json();
+    const data = await readCladoResponse(res);
     return { data };
   },
 });
@@ -55,15 +70,18 @@ export const cladoDeepResearchTool = createTool({
       },
       body: JSON.stringify(inputData),
     });
-    const startBody = await start.json();
+    const startBody = await readCladoResponse(start);
     const jobId = startBody.job_id as string;
+    if (!jobId) {
+      throw new Error("Clado deep research did not return job_id");
+    }
 
     for (let i = 0; i < 30; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10_000));
-      const statusRes = await fetch(`${CLADO_BASE}/api/search/deep_research/status?job_id=${jobId}`, {
+      const statusRes = await fetch(`${CLADO_BASE}/api/search/deep_research/${jobId}`, {
         headers: authHeaders,
       });
-      const status = await statusRes.json();
+      const status = await readCladoResponse(statusRes);
       if (status.status === "completed") {
         return { data: status };
       }
@@ -94,7 +112,7 @@ export const cladoEnrichContactTool = createTool({
     if (inputData.phone_enrichment) url.searchParams.set("phone_enrichment", "true");
 
     const res = await fetch(url, { headers: authHeaders });
-    const data = await res.json();
+    const data = await readCladoResponse(res);
     return { data };
   },
 });
@@ -109,10 +127,10 @@ export const cladoGetProfileTool = createTool({
     data: z.any(),
   }),
   execute: async (inputData) => {
-    const url = new URL(`${CLADO_BASE}/api/profile`);
+    const url = new URL(`${CLADO_BASE}/api/enrich/linkedin`);
     url.searchParams.set("linkedin_url", inputData.linkedin_url);
     const res = await fetch(url, { headers: authHeaders });
-    const data = await res.json();
+    const data = await readCladoResponse(res);
     return { data };
   },
 });
@@ -130,7 +148,7 @@ export const cladoScrapeLinkedinProfileTool = createTool({
     const url = new URL(`${CLADO_BASE}/api/enrich/scrape`);
     url.searchParams.set("linkedin_url", inputData.linkedin_url);
     const res = await fetch(url, { headers: authHeaders });
-    const data = await res.json();
+    const data = await readCladoResponse(res);
     return { data };
   },
 });
@@ -152,7 +170,7 @@ export const cladoGetPostReactionsTool = createTool({
     if (typeof inputData.page === "number") url.searchParams.set("page", String(inputData.page));
     if (inputData.reaction_type) url.searchParams.set("reaction_type", inputData.reaction_type);
     const res = await fetch(url, { headers: authHeaders });
-    const data = await res.json();
+    const data = await readCladoResponse(res);
     return { data };
   },
 });
