@@ -17,8 +17,11 @@ export const env = {
   CRON_SECRET: process.env.CRON_SECRET ?? "",
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL ?? "",
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-  UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL ?? "",
-  UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN ?? "",
+  REDIS_HOST:
+    process.env.REDIS_HOST ?? "master.sales-navy.g3u5fs.aps1.cache.amazonaws.com",
+  REDIS_PORT: process.env.REDIS_PORT ?? "6379",
+  REDIS_PASSWORD: process.env.REDIS_PASSWORD ?? "",
+  REDIS_TLS_ENABLED: process.env.REDIS_TLS_ENABLED ?? "true",
   ENABLE_TEMPLATE_EXPERIMENTS: process.env.ENABLE_TEMPLATE_EXPERIMENTS ?? "true",
   PIPELINE_EXECUTION_MODE: process.env.PIPELINE_EXECUTION_MODE ?? "legacy",
   PIPELINE_WORKER_ID: process.env.PIPELINE_WORKER_ID ?? "pipeline-worker",

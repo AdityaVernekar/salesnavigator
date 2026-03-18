@@ -1,5 +1,5 @@
 import { Mastra } from "@mastra/core/mastra";
-import { PostgresStore } from "@mastra/pg";
+import { LibSQLStore } from "@mastra/libsql";
 import { followUpWorkflow } from "@/mastra/workflows/follow-up";
 import { salesPipelineWorkflow } from "@/mastra/workflows/sales-pipeline";
 import {
@@ -8,13 +8,14 @@ import {
   salesPipelinePeopleDiscoveryWorkflow,
   salesPipelineScoringWorkflow,
 } from "@/mastra/workflows/sales-pipeline-stage";
-import { env } from "@/lib/config/env";
 
+// Use in-memory LibSQL instead of PostgresStore to avoid DDL lock contention
+// on Supabase. Mastra workflow execution state is ephemeral — actual pipeline
+// state is persisted in pipeline_runs / stage_jobs via supabaseServer.
 export const mastra = new Mastra({
-  storage: new PostgresStore({
+  storage: new LibSQLStore({
     id: "salesnav-mastra-storage",
-    connectionString: env.SUPABASE_DB_POOLER_URL || env.SUPABASE_DB_URL,
-    ssl: { rejectUnauthorized: false },
+    url: ":memory:",
   }),
   workflows: {
     salesPipelineWorkflow,

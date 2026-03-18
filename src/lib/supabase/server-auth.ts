@@ -22,8 +22,13 @@ export async function createSupabaseServerAuthClient() {
         return cookieStore.getAll();
       },
       setAll(items) {
-        for (const item of items) {
-          cookieStore.set(item.name, item.value, item.options);
+        try {
+          for (const item of items) {
+            cookieStore.set(item.name, item.value, item.options);
+          }
+        } catch {
+          // Next.js forbids cookie writes in some server-render contexts.
+          // Route handlers and server actions can still set cookies normally.
         }
       },
     },

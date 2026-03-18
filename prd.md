@@ -133,7 +133,7 @@ followUpWorkflow (separate, runs on cron)
 | **UI Components** | shadcn/ui + Tailwind CSS v4 | Ship fast, looks good, accessible |
 | **Data Fetching** | TanStack Query | Server state sync, caching, optimistic updates |
 | **Cron Scheduling** | Dedicated backend worker service + optional external scheduler | Service-owned execution with cron endpoints available for manual/emergency triggers |
-| **Queue (Phase 2)** | Upstash Redis + BullMQ | Retries, concurrency limits, dead-letter queues for production scale |
+| **Queue (Phase 2)** | AWS ElastiCache Redis + BullMQ | Retries, concurrency limits, dead-letter queues for production scale |
 | **Encryption** | `node:crypto` AES-256-GCM | OAuth tokens encrypted at rest in Supabase |
 
 ---
@@ -1758,7 +1758,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 | Database | Supabase Postgres | Free tier, realtime, built-in auth, easy migrations |
 | Crons | Dedicated backend worker service + optional external scheduler | Centralized execution ownership with simpler operations and rollback |
 | UI | shadcn/ui + Tailwind | Fast to build, great defaults, accessible |
-| Queue (Phase 2) | Upstash Redis + BullMQ | Serverless, retries, concurrency — add when scaling |
+| Queue (Phase 2) | AWS ElastiCache Redis + BullMQ | Managed Redis, retries, concurrency — add when scaling |
 | No LangChain | — | Python-first, 50+ deps, heavy abstraction not worth it for TypeScript project |
 | No CrewAI | — | Too opinionated about agent collaboration patterns; Mastra workflows give us explicit control |
 | No custom LLM client | — | Mastra's model routing replaces `SalesNavLLMClient` — same multi-provider support with less code |

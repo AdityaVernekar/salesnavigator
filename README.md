@@ -62,8 +62,10 @@ docker build -t salesnav:local \
   --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY \
   --build-arg SUPABASE_SERVICE_ROLE_KEY \
   --build-arg SUPABASE_DB_POOLER_URL \
-  --build-arg UPSTASH_REDIS_REST_URL \
-  --build-arg UPSTASH_REDIS_REST_TOKEN \
+  --build-arg REDIS_HOST \
+  --build-arg REDIS_PORT \
+  --build-arg REDIS_PASSWORD \
+  --build-arg REDIS_TLS_ENABLED \
   --build-arg OPENAI_API_KEY \
   --build-arg ANTHROPIC_API_KEY \
   --build-arg EXA_API_KEY \
@@ -126,8 +128,10 @@ Recommended production setting:
   - `NEXT_PUBLIC_SUPABASE_URL`
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - Queue/cache:
-  - `UPSTASH_REDIS_REST_URL`
-  - `UPSTASH_REDIS_REST_TOKEN`
+  - `REDIS_HOST` (e.g. `master.sales-navy.g3u5fs.aps1.cache.amazonaws.com`)
+  - `REDIS_PORT` (default `6379`)
+  - `REDIS_PASSWORD` (optional)
+  - `REDIS_TLS_ENABLED` (`true` for secure default)
 - App/runtime:
   - `CRON_SECRET`
   - `ENCRYPTION_MASTER_KEY`

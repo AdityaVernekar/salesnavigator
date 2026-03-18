@@ -1,25 +1,10 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { sendEmailWithComposio } from "@/lib/composio/gmail";
-import { Redis } from "@upstash/redis";
-import { env } from "@/lib/config/env";
+import { getRedisClient } from "@/lib/redis/client";
 
 const MAILBOX_TOKEN_WINDOW_SECONDS = 60;
 const MAILBOX_DEFAULT_PER_MINUTE = 20;
 const MAILBOX_TOKEN_KEY_PREFIX = "mailbox:send-tokens:v1";
-
-let redisClient: Redis | null = null;
-
-function getRedisClient() {
-  if (redisClient) return redisClient;
-  if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) {
-    throw new Error("Upstash Redis env is missing");
-  }
-  redisClient = new Redis({
-    url: env.UPSTASH_REDIS_REST_URL,
-    token: env.UPSTASH_REDIS_REST_TOKEN,
-  });
-  return redisClient;
-}
 
 async function consumeMailboxToken(accountId: string, limitPerMinute = MAILBOX_DEFAULT_PER_MINUTE) {
   const redis = getRedisClient();
