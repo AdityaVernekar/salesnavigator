@@ -3,7 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 import { getMembershipForUser } from "@/lib/auth/membership";
 
 const PUBLIC_PATHS = ["/login", "/auth/callback", "/auth/set-password", "/auth/onboarding"];
-const PUBLIC_API_PREFIXES = ["/api/cron", "/api/gmail/callback"];
+const PUBLIC_API_PREFIXES = ["/api/cron", "/api/gmail/callback", "/api/agentmail/webhook"];
 
 function isPublicPath(pathname: string) {
   if (PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
