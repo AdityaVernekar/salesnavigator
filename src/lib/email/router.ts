@@ -1,5 +1,6 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { sendEmailWithComposio } from "@/lib/composio/gmail";
+import { sendEmailWithAgentMail } from "@/lib/agentmail/send";
 import { getRedisClient } from "@/lib/redis/client";
 
 const MAILBOX_TOKEN_WINDOW_SECONDS = 60;
@@ -124,11 +125,14 @@ export async function selectSendingAccount(
   return account;
 }
 
-export async function sendViaComposio(params: {
+export async function sendViaProvider(params: {
   campaignId: string;
   to: string;
   subject: string;
   bodyHtml: string;
+  bodyText?: string;
+  forceTextMode?: boolean;
+  threadId?: string;
 }) {
   const suppressed = await isSuppressedRecipient(params.campaignId, params.to);
   if (suppressed) {
@@ -136,9 +140,42 @@ export async function sendViaComposio(params: {
   }
   const account = await selectSendingAccount(params.campaignId);
   await consumeMailboxToken(account.id);
-  const result = await sendEmailWithComposio(account.id, params.to, params.subject, params.bodyHtml);
+
+  const provider = account.provider ?? "gmail_composio";
+  let result: { threadId?: string; messageId?: string; raw: unknown; mode: "html" | "text" };
+
+  if (provider === "agentmail") {
+    result = await sendEmailWithAgentMail(
+      account.id,
+      params.to,
+      params.subject,
+      params.bodyHtml,
+      params.bodyText,
+      { forceTextMode: params.forceTextMode, threadId: params.threadId },
+    );
+  } else {
+    const composioResult = await sendEmailWithComposio(
+      account.id,
+      params.to,
+      params.subject,
+      params.bodyHtml,
+      params.bodyText,
+      { forceTextMode: params.forceTextMode, threadId: params.threadId },
+    );
+    result = { ...composioResult, messageId: undefined };
+  }
 
   await supabaseServer.from("email_accounts").update({ sends_today: account.sends_today + 1 }).eq("id", account.id);
 
-  return { account, result };
+  return { account, result, provider };
+}
+
+/** @deprecated Use sendViaProvider instead */
+export async function sendViaComposio(params: {
+  campaignId: string;
+  to: string;
+  subject: string;
+  bodyHtml: string;
+}) {
+  return sendViaProvider(params);
 }
