@@ -169,6 +169,74 @@ export default async function CampaignDetailPage({
 
       <Card>
         <CardHeader>
+          <CardTitle>Email Workflow</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <div>
+            <p className="font-medium mb-2">Send Window</p>
+            <p className="text-muted-foreground">
+              {campaign.send_window_start ?? "09:00"} - {campaign.send_window_end ?? "17:00"}{" "}
+              ({campaign.send_window_timezone ?? "America/New_York"})
+            </p>
+            <p className="text-muted-foreground">
+              Days: {(campaign.send_window_days ?? [1,2,3,4,5]).map((d: number) =>
+                ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][d] ?? d
+              ).join(", ")}
+            </p>
+          </div>
+          <div>
+            <p className="font-medium mb-2">Sequence Steps</p>
+            {((campaign.sequence_steps ?? []) as Array<{
+              step_number: number;
+              delay_days: number;
+              delay_hours: number;
+              step_type: string;
+              template_id: string | null;
+              subject_override: string | null;
+            }>).length === 0 ? (
+              <p className="text-muted-foreground">No sequence steps configured.</p>
+            ) : (
+              <div className="space-y-2">
+                {((campaign.sequence_steps ?? []) as Array<{
+                  step_number: number;
+                  delay_days: number;
+                  delay_hours: number;
+                  step_type: string;
+                  template_id: string | null;
+                  subject_override: string | null;
+                }>).map((step, index) => (
+                  <div key={index} className="flex items-center gap-2 rounded border p-2">
+                    <Badge variant="outline" className="shrink-0">
+                      Step {index + 1}
+                    </Badge>
+                    <div className="flex-1">
+                      {index === 0 ? (
+                        <span>Initial email</span>
+                      ) : (
+                        <span>
+                          Wait {step.delay_days}d {step.delay_hours}h, then send follow-up
+                        </span>
+                      )}
+                      {step.template_id && (
+                        <span className="ml-2 text-muted-foreground">(template)</span>
+                      )}
+                      {step.subject_override && (
+                        <span className="ml-2 text-muted-foreground">
+                          &quot;{step.subject_override.slice(0, 40)}
+                          {step.subject_override.length > 40 ? "..." : ""}&quot;
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Enrollments</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
@@ -190,6 +258,11 @@ export default async function CampaignDetailPage({
                 </div>
                 <div>
                   Step {item.current_step} • {item.status}
+                  {item.scheduled_send_at && item.status === "active" && (
+                    <span className="ml-2 text-muted-foreground">
+                      Next: {new Date(item.scheduled_send_at).toLocaleString()}
+                    </span>
+                  )}
                 </div>
               </div>
             );

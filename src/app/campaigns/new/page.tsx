@@ -5,7 +5,10 @@ import { IcpForm } from "@/components/campaigns/icp-form";
 import { MailboxMultiSelect } from "@/components/campaigns/mailbox-multi-select";
 import { ScoringForm } from "@/components/campaigns/scoring-form";
 import { SequenceBuilder } from "@/components/campaigns/sequence-builder";
+import { SequenceStepEditor } from "@/components/campaigns/sequence-step-editor";
+import { SendWindowConfig } from "@/components/campaigns/send-window-config";
 import { leadTargetSchema } from "@/lib/campaigns/validation";
+import { sequenceStepsArraySchema } from "@/lib/workflows/sequence-schema";
 import { env } from "@/lib/config/env";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireCurrentUserCompany } from "@/lib/auth/user-company";
@@ -57,6 +60,26 @@ async function createCampaign(formData: FormData) {
   const template_experiment_id = templateExperimentIdRaw.trim() || null;
   const account_ids = formData.getAll("account_ids").map(String);
 
+  // Parse sequence steps
+  const sequenceStepsRaw = String(formData.get("sequence_steps") ?? "[]");
+  let sequence_steps;
+  try {
+    sequence_steps = sequenceStepsArraySchema.parse(JSON.parse(sequenceStepsRaw));
+  } catch {
+    throw new Error("Invalid sequence steps configuration");
+  }
+
+  // Parse send window
+  const send_window_start = String(formData.get("send_window_start") ?? "09:00");
+  const send_window_end = String(formData.get("send_window_end") ?? "17:00");
+  const send_window_timezone = String(formData.get("send_window_timezone") ?? "America/New_York");
+  let send_window_days: number[];
+  try {
+    send_window_days = JSON.parse(String(formData.get("send_window_days") ?? "[1,2,3,4,5]"));
+  } catch {
+    send_window_days = [1, 2, 3, 4, 5];
+  }
+
   if (!["explicit_single", "round_robin", "least_loaded"].includes(mailbox_selection_mode)) {
     throw new Error("Invalid mailbox selection mode");
   }
@@ -90,6 +113,11 @@ async function createCampaign(formData: FormData) {
         primary_account_id,
         template_experiment_id,
         account_ids,
+        sequence_steps,
+        send_window_start,
+        send_window_end,
+        send_window_timezone,
+        send_window_days,
         status: "draft",
       })
       .select("id")
@@ -138,7 +166,7 @@ export default async function NewCampaignPage({
   };
   const { supabase, companyId } = await requireCurrentUserCompany();
 
-  const [{ data: accounts }, { data: experiments }] = await Promise.all([
+  const [{ data: accounts }, { data: experiments }, { data: emailTemplates }] = await Promise.all([
     supabase
       .from("email_accounts")
       .select("id,gmail_address,is_active")
@@ -152,6 +180,12 @@ export default async function NewCampaignPage({
       .eq("company_id", companyId)
       .eq("status", "active")
       .order("created_at", { ascending: false }),
+    supabase
+      .from("email_templates")
+      .select("id,name")
+      .eq("company_id", companyId)
+      .eq("status", "active")
+      .order("updated_at", { ascending: false }),
   ]);
 
   return (
@@ -184,6 +218,13 @@ export default async function NewCampaignPage({
             templateExperimentId: defaults.templateExperimentId,
           }}
         />
+        <SequenceStepEditor
+          templates={(emailTemplates ?? []).map((t) => ({
+            id: t.id as string,
+            name: t.name as string,
+          }))}
+        />
+        <SendWindowConfig />
         <div className="space-y-2">
           <p className="text-sm font-medium">Assigned Mailboxes</p>
           <p className="text-xs text-muted-foreground">
