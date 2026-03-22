@@ -1,6 +1,7 @@
 import { createWorkflow } from "@mastra/core/workflows";
 import {
   enrichmentOutputSchema,
+  buildCompanyResearchStep,
   buildEnrichmentStep,
   buildLeadGenStep,
   buildPeopleGenStep,
@@ -46,5 +47,6 @@ export const salesPipelineScoringWorkflow = createWorkflow({
   .then(buildLeadGenStep())
   .then(buildPeopleGenStep())
   .then(buildEnrichmentStep())
+  .then(buildCompanyResearchStep())
   .then(buildScoringStep())
   .commit();

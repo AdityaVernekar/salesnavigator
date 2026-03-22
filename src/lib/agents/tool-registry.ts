@@ -12,6 +12,12 @@ import {
   exaSearchAndContentsTool,
   exaSearchTool,
 } from "@/mastra/tools/exa";
+import {
+  exaWebsetCreateTool,
+  exaWebsetGetItemsTool,
+  exaWebsetSearchCompaniesTool,
+  exaWebsetSearchPeopleTool,
+} from "@/mastra/tools/exa-websets";
 import { gmailReadTool, gmailSendTool } from "@/mastra/tools/gmail";
 import { slackNotifyTool } from "@/mastra/tools/slack";
 import type { ManagedAgentType, NativeToolKey } from "@/lib/agents/runtime-types";
@@ -39,12 +45,16 @@ const nativeToolRegistry: Record<NativeToolKey, RuntimeToolDescriptor> = {
   "gmail.send": { runtimeName: "gmailSendTool", tool: gmailSendTool },
   "gmail.read": { runtimeName: "gmailReadTool", tool: gmailReadTool },
   "slack.notify": { runtimeName: "slackNotifyTool", tool: slackNotifyTool },
+  "exa.webset_create": { runtimeName: "exaWebsetCreateTool", tool: exaWebsetCreateTool },
+  "exa.webset_get_items": { runtimeName: "exaWebsetGetItemsTool", tool: exaWebsetGetItemsTool },
+  "exa.webset_search_people": { runtimeName: "exaWebsetSearchPeopleTool", tool: exaWebsetSearchPeopleTool },
+  "exa.webset_search_companies": { runtimeName: "exaWebsetSearchCompaniesTool", tool: exaWebsetSearchCompaniesTool },
 };
 
 export const agentToolAllowlist: Record<ManagedAgentType, string[]> = {
-  lead_gen: ["exa.search", "exa.find_similar", "exa.research"],
-  people_gen: ["clado.search_people", "clado.deep_research", "exa.search", "exa.research"],
-  enrichment: ["clado.get_profile", "clado.enrich_contact", "exa.search_contents"],
+  lead_gen: ["exa.search", "exa.find_similar", "exa.research", "exa.webset_search_companies"],
+  people_gen: ["clado.search_people", "clado.deep_research", "exa.search", "exa.research", "exa.webset_search_people"],
+  enrichment: ["clado.get_profile", "clado.enrich_contact", "exa.search_contents", "exa.webset_create", "exa.webset_get_items"],
   scoring: [],
   cold_email: ["gmail.send", "exa.search", "clado.scrape_linkedin_profile", "clado.get_post_reactions"],
   followup: ["gmail.read", "gmail.send", "slack.notify"],

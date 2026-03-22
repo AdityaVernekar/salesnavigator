@@ -54,7 +54,7 @@ type CampaignOption = {
 type InboxDashboardProps = {
   items: InboxItem[];
   campaigns: CampaignOption[];
-  view: "sent" | "replies";
+  view: "sent" | "replies" | "needs_reply";
   campaignId: string;
   limit: number;
   cursor?: string;
@@ -139,6 +139,7 @@ export function InboxDashboard({
           <TabsList>
             <TabsTrigger value="sent">Sent</TabsTrigger>
             <TabsTrigger value="replies">Replies</TabsTrigger>
+            <TabsTrigger value="needs_reply">Needs Reply</TabsTrigger>
           </TabsList>
         </Tabs>
         <Select

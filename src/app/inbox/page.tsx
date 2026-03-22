@@ -17,7 +17,8 @@ export default async function InboxPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const view = readParam(params.view, "replies") === "sent" ? "sent" : "replies";
+  const viewRaw = readParam(params.view, "replies");
+  const view = viewRaw === "sent" ? "sent" : viewRaw === "needs_reply" ? "needs_reply" : "replies";
   const campaignId = readParam(params.campaignId, "all");
   const cursor = readParam(params.cursor, "");
   const limitRaw = Number(readParam(params.limit, "50"));

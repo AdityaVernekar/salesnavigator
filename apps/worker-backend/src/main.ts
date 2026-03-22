@@ -13,6 +13,14 @@ async function bootstrap() {
   app.enableShutdownHooks();
   await app.listen(port, "0.0.0.0");
   logger.log(`Nest worker backend listening on :${port}`);
+
+  const shutdown = async () => {
+    logger.log("Shutting down worker backend...");
+    await app.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 void bootstrap().catch((error) => {

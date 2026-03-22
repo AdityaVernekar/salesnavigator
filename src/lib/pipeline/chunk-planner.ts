@@ -6,6 +6,7 @@ const DEFAULT_CHUNK_SIZE: Record<ExecutablePipelineStage, number> = {
   lead_generation: 15,
   people_discovery: 10,
   enrichment: 25,
+  company_research: 10,
   scoring: 50,
   email: 50,
 };

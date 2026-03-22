@@ -28,7 +28,10 @@ export async function runWarmupCycle() {
     const target = getWarmupTarget(daysInWarmup);
 
     if (shouldGraduate(daysInWarmup)) {
-      await supabaseServer.from("email_accounts").update({ warmup_status: "graduated" }).eq("id", account.id);
+      await supabaseServer
+        .from("email_accounts")
+        .update({ warmup_status: "graduated", daily_limit: 50 })
+        .eq("id", account.id);
       continue;
     }
 
@@ -48,6 +51,7 @@ export async function runWarmupCycle() {
       .update({
         warmup_status: "warming",
         warmup_start_date: account.warmup_start_date ?? new Date().toISOString().slice(0, 10),
+        daily_limit: target,
       })
       .eq("id", account.id);
   }

@@ -85,7 +85,7 @@ async function orchestrateChunkedRun(job: {
   runId: string;
   campaignId: string;
   runConfig: Record<string, unknown>;
-  selectedStages: Array<"lead_generation" | "people_discovery" | "enrichment" | "scoring" | "email">;
+  selectedStages: Array<"lead_generation" | "people_discovery" | "enrichment" | "company_research" | "scoring" | "email">;
 }) {
   const { data: campaign } = await supabaseServer
     .from("campaigns")

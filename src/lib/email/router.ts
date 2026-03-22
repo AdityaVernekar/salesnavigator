@@ -72,7 +72,22 @@ export async function selectSendingAccount(
     throw new Error("No active account available");
   }
 
-  const eligibleAccounts = accounts.filter((item) => (item.sends_today ?? 0) < (item.daily_limit ?? 0));
+  // Only graduated accounts can send real campaign emails
+  const graduatedAccounts = accounts.filter(
+    (item) => item.warmup_status === "graduated",
+  );
+  if (!graduatedAccounts.length) {
+    const warmingCount = accounts.filter(
+      (item) => item.warmup_status === "warming" || item.warmup_status === "new",
+    ).length;
+    throw new Error(
+      warmingCount > 0
+        ? `All ${warmingCount} configured mailbox(es) are still warming up — campaign sends are blocked until warmup completes (21 days)`
+        : "No graduated mailboxes available for campaign sends",
+    );
+  }
+
+  const eligibleAccounts = graduatedAccounts.filter((item) => (item.sends_today ?? 0) < (item.daily_limit ?? 0));
   if (!eligibleAccounts.length) {
     throw new Error("All configured mailboxes have reached their daily limit");
   }

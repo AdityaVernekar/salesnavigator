@@ -14,7 +14,7 @@ import {
 // state is persisted in pipeline_runs / stage_jobs via supabaseServer.
 export const mastra = new Mastra({
   storage: new LibSQLStore({
-    id: "salesnav-mastra-storage",
+    id: "autoreach-mastra-storage",
     url: ":memory:",
   }),
   workflows: {

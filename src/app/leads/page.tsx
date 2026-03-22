@@ -13,7 +13,8 @@ interface ContactForLead {
   company_name: string | null;
 }
 
-const PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = 100;
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const STATUS_OPTIONS = [
   "new",
   "enriching",
@@ -41,9 +42,10 @@ interface LeadsPageData {
   to: number;
 }
 
-function buildLeadsHref(page: number, filters: LeadsFilters) {
+function buildLeadsHref(page: number, filters: LeadsFilters, pageSize: number) {
   const params = new URLSearchParams();
   params.set("page", String(page));
+  if (pageSize !== DEFAULT_PAGE_SIZE) params.set("pageSize", String(pageSize));
   if (filters.status !== "all") params.set("status", filters.status);
   if (filters.source !== "all") params.set("source", filters.source);
   if (filters.q) params.set("q", filters.q);
@@ -56,9 +58,10 @@ async function getLeadRows(
   companyId: string,
   requestedPage: number,
   filters: LeadsFilters,
+  pageSize: number,
 ): Promise<LeadsPageData> {
-  const firstFrom = (requestedPage - 1) * PAGE_SIZE;
-  const firstTo = firstFrom + PAGE_SIZE - 1;
+  const firstFrom = (requestedPage - 1) * pageSize;
+  const firstTo = firstFrom + pageSize - 1;
   let firstQuery = supabase
     .from("leads")
     .select("id,company_name,source,status,created_at", { count: "exact" })
@@ -82,7 +85,7 @@ async function getLeadRows(
   const { data: firstLeads, count } = await firstQuery;
 
   const totalCount = count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const currentPage = Math.min(requestedPage, totalPages);
 
   const leads =
@@ -96,8 +99,8 @@ async function getLeadRows(
               .eq("company_id", companyId)
               .order("created_at", { ascending: false })
               .range(
-                (currentPage - 1) * PAGE_SIZE,
-                (currentPage - 1) * PAGE_SIZE + PAGE_SIZE - 1,
+                (currentPage - 1) * pageSize,
+                (currentPage - 1) * pageSize + pageSize - 1,
               );
 
             if (filters.status !== "all") {
@@ -176,8 +179,8 @@ async function getLeadRows(
     };
   });
 
-  const from = (currentPage - 1) * PAGE_SIZE + 1;
-  const to = Math.min(currentPage * PAGE_SIZE, totalCount);
+  const from = (currentPage - 1) * pageSize + 1;
+  const to = Math.min(currentPage * pageSize, totalCount);
 
   return {
     rows,
@@ -189,11 +192,27 @@ async function getLeadRows(
   };
 }
 
+function buildCsvContent(rows: LeadRow[]) {
+  const headers = ["Company", "Contact", "Source", "Status", "Score", "Tier"];
+  const csvRows = rows.map((row) => [
+    row.company,
+    row.contactName ?? "",
+    row.source,
+    row.status,
+    row.score ?? "",
+    row.tier ?? "",
+  ]);
+  return [headers, ...csvRows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+}
+
 export default async function LeadsPage({
   searchParams,
 }: {
   searchParams: Promise<{
     page?: string;
+    pageSize?: string;
     status?: string;
     source?: string;
     q?: string;
@@ -203,6 +222,10 @@ export default async function LeadsPage({
   const resolvedSearchParams = await searchParams;
   const pageValue = Number.parseInt(resolvedSearchParams.page ?? "1", 10);
   const requestedPage = Number.isFinite(pageValue) ? Math.max(1, pageValue) : 1;
+  const parsedPageSize = Number.parseInt(resolvedSearchParams.pageSize ?? "", 10);
+  const pageSize = PAGE_SIZE_OPTIONS.includes(parsedPageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? parsedPageSize
+    : DEFAULT_PAGE_SIZE;
   const filters: LeadsFilters = {
     status: STATUS_OPTIONS.includes(
       (resolvedSearchParams.status ?? "all") as (typeof STATUS_OPTIONS)[number],
@@ -225,15 +248,17 @@ export default async function LeadsPage({
     .order("created_at", { ascending: false });
 
   const { rows, totalCount, totalPages, currentPage, from, to } =
-    await getLeadRows(supabase, companyId, requestedPage, filters);
+    await getLeadRows(supabase, companyId, requestedPage, filters, pageSize);
 
   const previousPageHref = buildLeadsHref(
     Math.max(1, currentPage - 1),
     filters,
+    pageSize,
   );
   const nextPageHref = buildLeadsHref(
     Math.min(totalPages, currentPage + 1),
     filters,
+    pageSize,
   );
   const hasPreviousPage = currentPage > 1;
   const hasNextPage = currentPage < totalPages;
@@ -242,13 +267,26 @@ export default async function LeadsPage({
     filters.source !== "all" ||
     filters.campaignId !== "all" ||
     Boolean(filters.q);
+  const csvContent = buildCsvContent(rows);
+  const csvDataUri = `data:text/csv;charset=utf-8,${encodeURIComponent(csvContent)}`;
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Leads</h1>
-        <p className="text-sm text-muted-foreground">
-          All discovered leads, including qualification signals when available.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Leads</h1>
+          <p className="text-sm text-muted-foreground">
+            All discovered leads, including qualification signals when available.
+          </p>
+        </div>
+        {rows.length > 0 && (
+          <a
+            href={csvDataUri}
+            download={`leads-page-${currentPage}.csv`}
+            className="inline-flex h-9 items-center rounded-md border px-3 text-sm hover:bg-muted"
+          >
+            Export CSV
+          </a>
+        )}
       </div>
       <LeadsFilterForm
         q={filters.q}
@@ -292,9 +330,22 @@ export default async function LeadsPage({
         <div className="space-y-3">
           <LeadsTableShell rows={rows} />
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-            <p className="text-muted-foreground">
-              Showing {from}-{to} of {totalCount}
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-muted-foreground">
+                Showing {from}-{to} of {totalCount}
+              </p>
+              <span className="text-muted-foreground">|</span>
+              <span className="text-muted-foreground">Per page:</span>
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <Link
+                  key={size}
+                  href={buildLeadsHref(1, filters, size)}
+                  className={`text-sm ${size === pageSize ? "font-semibold text-foreground" : "text-primary underline"}`}
+                >
+                  {size}
+                </Link>
+              ))}
+            </div>
             <div className="flex items-center gap-3">
               <Link
                 href={previousPageHref}

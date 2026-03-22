@@ -6,7 +6,7 @@ import type { WorkflowNodeData } from "./types";
 function TriggerNode({ data }: NodeProps) {
   const d = data as unknown as WorkflowNodeData;
   return (
-    <div className="rounded-lg border border-violet-500/50 bg-zinc-900 px-4 py-3 shadow-lg shadow-violet-500/10 min-w-[200px]">
+    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3 shadow-sm min-w-[200px]">
       <div className="flex items-center gap-2">
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-violet-600">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -14,13 +14,13 @@ function TriggerNode({ data }: NodeProps) {
           </svg>
         </div>
         <div>
-          <p className="text-sm font-medium text-zinc-100">{d.label}</p>
+          <p className="text-sm font-medium text-zinc-900">{d.label}</p>
           {d.description && (
-            <p className="text-xs text-zinc-400">{d.description}</p>
+            <p className="text-xs text-zinc-500">{d.description}</p>
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className="!bg-violet-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+      <Handle type="source" position={Position.Bottom} className="!bg-violet-500 !w-2.5 !h-2.5 !border-white !border-2" />
     </div>
   );
 }
@@ -28,8 +28,8 @@ function TriggerNode({ data }: NodeProps) {
 function EmailNode({ data }: NodeProps) {
   const d = data as unknown as WorkflowNodeData;
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 shadow-lg min-w-[220px]">
-      <Handle type="target" position={Position.Top} className="!bg-zinc-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 shadow-sm min-w-[220px]">
+      <Handle type="target" position={Position.Top} className="!bg-zinc-400 !w-2.5 !h-2.5 !border-white !border-2" />
       <div className="flex items-center gap-2">
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -38,16 +38,16 @@ function EmailNode({ data }: NodeProps) {
           </svg>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-zinc-100">{d.label}</p>
+          <p className="text-sm font-medium text-zinc-900">{d.label}</p>
           {d.subjectOverride && (
-            <p className="text-xs text-zinc-400 truncate">{d.subjectOverride}</p>
+            <p className="text-xs text-zinc-500 truncate">{d.subjectOverride}</p>
           )}
           {d.templateId && (
-            <p className="text-xs text-zinc-500">Using template</p>
+            <p className="text-xs text-zinc-400">Using template</p>
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className="!bg-zinc-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+      <Handle type="source" position={Position.Bottom} className="!bg-zinc-400 !w-2.5 !h-2.5 !border-white !border-2" />
     </div>
   );
 }
@@ -62,8 +62,8 @@ function DelayNode({ data }: NodeProps) {
     .join(" ");
 
   return (
-    <div className="rounded-lg border border-amber-500/40 bg-zinc-900 px-4 py-3 shadow-lg min-w-[180px]">
-      <Handle type="target" position={Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+    <div className="rounded-lg border border-amber-200 bg-white px-4 py-3 shadow-sm min-w-[180px]">
+      <Handle type="target" position={Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5 !border-white !border-2" />
       <div className="flex items-center gap-2">
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -72,11 +72,11 @@ function DelayNode({ data }: NodeProps) {
           </svg>
         </div>
         <div>
-          <p className="text-sm font-medium text-zinc-100">{d.label}</p>
-          <p className="text-xs text-amber-400">Wait {delayText || "0d"}</p>
+          <p className="text-sm font-medium text-zinc-900">{d.label}</p>
+          <p className="text-xs text-amber-600">Wait {delayText || "0d"}</p>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} className="!bg-amber-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+      <Handle type="source" position={Position.Bottom} className="!bg-amber-500 !w-2.5 !h-2.5 !border-white !border-2" />
     </div>
   );
 }
@@ -84,8 +84,8 @@ function DelayNode({ data }: NodeProps) {
 function ConditionNode({ data }: NodeProps) {
   const d = data as unknown as WorkflowNodeData;
   return (
-    <div className="rounded-lg border border-purple-500/40 bg-zinc-900 px-4 py-3 shadow-lg min-w-[200px]">
-      <Handle type="target" position={Position.Top} className="!bg-purple-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+    <div className="rounded-lg border border-purple-200 bg-white px-4 py-3 shadow-sm min-w-[200px]">
+      <Handle type="target" position={Position.Top} className="!bg-purple-500 !w-2.5 !h-2.5 !border-white !border-2" />
       <div className="flex items-center gap-2">
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-purple-600">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -96,14 +96,14 @@ function ConditionNode({ data }: NodeProps) {
           </svg>
         </div>
         <div>
-          <p className="text-sm font-medium text-zinc-100">{d.label}</p>
+          <p className="text-sm font-medium text-zinc-900">{d.label}</p>
           {d.description && (
-            <p className="text-xs text-zinc-400">{d.description}</p>
+            <p className="text-xs text-zinc-500">{d.description}</p>
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} id="yes" style={{ left: "30%" }} className="!bg-green-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
-      <Handle type="source" position={Position.Bottom} id="no" style={{ left: "70%" }} className="!bg-red-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+      <Handle type="source" position={Position.Bottom} id="yes" style={{ left: "30%" }} className="!bg-green-500 !w-2.5 !h-2.5 !border-white !border-2" />
+      <Handle type="source" position={Position.Bottom} id="no" style={{ left: "70%" }} className="!bg-red-500 !w-2.5 !h-2.5 !border-white !border-2" />
     </div>
   );
 }
@@ -111,16 +111,16 @@ function ConditionNode({ data }: NodeProps) {
 function EndNode({ data }: NodeProps) {
   const d = data as unknown as WorkflowNodeData;
   return (
-    <div className="rounded-lg border border-zinc-600 bg-zinc-900 px-4 py-3 shadow-lg min-w-[160px]">
-      <Handle type="target" position={Position.Top} className="!bg-zinc-500 !w-2.5 !h-2.5 !border-zinc-800 !border-2" />
+    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 shadow-sm min-w-[160px]">
+      <Handle type="target" position={Position.Top} className="!bg-zinc-400 !w-2.5 !h-2.5 !border-white !border-2" />
       <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-600">
+        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-500">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <rect x="8" y="8" width="8" height="8" rx="1" />
           </svg>
         </div>
-        <p className="text-sm font-medium text-zinc-100">{d.label}</p>
+        <p className="text-sm font-medium text-zinc-900">{d.label}</p>
       </div>
     </div>
   );

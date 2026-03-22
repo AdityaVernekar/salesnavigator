@@ -111,7 +111,9 @@ export async function POST(
   const renderedBody = renderTemplate(version.body_template, variables).trim();
 
   try {
-    const runtime = await buildRuntimeAgent("cold_email");
+    const runtime = await buildRuntimeAgent("cold_email", {
+      contactId: contact.id,
+    });
     const prompt = [
       "Personalize this outbound email from a provided template.",
       "Keep the original intent and CTA from the template, but improve relevance for the contact.",

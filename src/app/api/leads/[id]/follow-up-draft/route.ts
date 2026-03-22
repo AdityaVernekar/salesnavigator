@@ -124,7 +124,10 @@ export async function POST(
   ].join("\n");
 
   try {
-    const runtime = await buildRuntimeAgent("followup");
+    const runtime = await buildRuntimeAgent("followup", {
+      contactId: sourceEmail.contact_id,
+      threadId: sourceEmail.gmail_thread_id ?? undefined,
+    });
     const generation = await runtime.agent.generate(runtime.preparePrompt(prompt), {
       structuredOutput: { schema: followUpDraftSchema },
     });

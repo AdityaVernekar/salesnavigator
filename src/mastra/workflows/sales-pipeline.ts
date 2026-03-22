@@ -17,10 +17,12 @@ import { buildRuntimeAgent, type RuntimeAgentResolution } from "@/lib/agents/bui
 import { env } from "@/lib/config/env";
 import { selectSendingAccount } from "@/lib/email/router";
 import { sendEmailWithComposio } from "@/lib/composio/gmail";
+import { sendEmailWithAgentMail } from "@/lib/agentmail/send";
 import { getActiveExperimentForCampaign, chooseVariant, recordVariantSend } from "@/lib/email/experiments";
-import { renderTemplate, renderTemplateBodies } from "@/lib/email/templates";
+import { renderTemplate, renderTemplateBodies, validateTemplateVariables } from "@/lib/email/templates";
 import { appendSignatureText } from "@/lib/email/signature";
 import { pipelineRunConfigSchema } from "@/lib/pipeline/run-config";
+import { exaWebsetSearchPeopleTool, parseWebsetPeopleItems } from "@/mastra/tools/exa-websets";
 
 function safeParseJson(value: string | null): Record<string, unknown> {
   if (!value) return {};
@@ -75,7 +77,11 @@ export const enrichmentInputSchema = peopleDiscoveryOutputSchema;
 export const enrichmentOutputSchema = enrichmentInputSchema.extend({
   leadsEnriched: z.number(),
 });
-export const scoringInputSchema = enrichmentOutputSchema;
+export const companyResearchInputSchema = enrichmentOutputSchema;
+export const companyResearchOutputSchema = companyResearchInputSchema.extend({
+  leadsResearched: z.number(),
+});
+export const scoringInputSchema = companyResearchOutputSchema;
 export const scoringOutputSchema = scoringInputSchema.extend({
   leadsScored: z.number(),
 });
@@ -129,7 +135,7 @@ async function consumeAgentStream(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   stream: any,
   runId: string,
-  agentType: "lead_gen" | "people_gen" | "enrichment" | "scoring" | "cold_email",
+  agentType: "lead_gen" | "people_gen" | "enrichment" | "company_research" | "scoring" | "cold_email",
 ) {
   let reasoningBuffer = "";
   let textBuffer = "";
@@ -176,7 +182,7 @@ async function consumeAgentStream(
   });
 }
 
-type DiscoverySource = "clado" | "exa";
+type DiscoverySource = "clado" | "exa" | "exa-websets";
 
 type SourceFallbackAttempt = {
   source: DiscoverySource;
@@ -296,17 +302,6 @@ async function runSourceFallback<T>(input: {
   throw new Error(`All ${input.stage} source branches failed or returned no usable data`);
 }
 
-const personalizedEmailDraftSchema = z.object({
-  subject: z.string().min(1).max(200),
-  bodyText: z.string().min(1).max(6000),
-});
-
-function compactText(value: unknown, maxLength = 800) {
-  if (value === null || value === undefined) return "";
-  const raw = typeof value === "string" ? value : JSON.stringify(value);
-  return raw.replace(/\s+/g, " ").trim().slice(0, maxLength);
-}
-
 export function buildLeadGenStep() {
   return createStep({
   id: "lead-gen-step",
@@ -354,12 +349,120 @@ export function buildLeadGenStep() {
         return { ...inputData, leadsGenerated: 0 };
       }
 
+      const leadGenSource = inputData.runConfig?.source ?? "auto";
+
+      // ── Exa Websets fast-path: single call produces leads + contacts + emails ──
+      if (leadGenSource === "exa_websets") {
+        await logRunEvent(inputData.runId, "lead_gen", "info", "Exa Websets fast-path: searching for people + companies", {
+          campaignId: inputData.campaignId,
+          icp: campaign?.icp_description ?? "",
+          count: Math.min(remainingSlots, 100),
+        });
+
+        const websetRaw = await exaWebsetSearchPeopleTool.execute!(
+          { query: campaign?.icp_description ?? "", count: Math.min(remainingSlots, 100) },
+          {} as never,
+        );
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const websetResult = websetRaw as { websetId: string; status: string; itemCount: number; items: any[] };
+
+        if (!websetResult.items?.length) {
+          await updateRunState(inputData.runId, { leads_generated: 0 });
+          await logRunEvent(inputData.runId, "lead_gen", "success", "Exa Websets returned no results", {
+            campaignId: inputData.campaignId,
+            websetId: websetResult.websetId,
+            websetStatus: websetResult.status,
+            durationMs: Date.now() - startedAt,
+          });
+          return { ...inputData, leadsGenerated: 0 };
+        }
+
+        const { leads: parsedLeads, contactsByCompanyKey } = parseWebsetPeopleItems(
+          websetResult.items,
+          inputData.campaignId,
+          inputData.runId,
+        );
+
+        // Dedup leads against existing ones
+        const existingKeys = new Set(
+          (existingLeads ?? [])
+            .map((lead) => leadKey(lead))
+            .filter((key): key is string => Boolean(key)),
+        );
+        const seenBatchKeys = new Set<string>();
+        const companyKeys = Array.from(contactsByCompanyKey.keys());
+        const dedupedLeads: typeof parsedLeads = [];
+        const dedupedCompanyKeys: string[] = [];
+
+        for (let i = 0; i < parsedLeads.length; i++) {
+          const lead = parsedLeads[i];
+          const key = leadKey(lead);
+          if (key && (existingKeys.has(key) || seenBatchKeys.has(key))) continue;
+          if (key) seenBatchKeys.add(key);
+          dedupedLeads.push(lead);
+          dedupedCompanyKeys.push(companyKeys[i]);
+        }
+
+        const leadsToInsert = dedupedLeads.slice(0, remainingSlots);
+        const keysToInsert = dedupedCompanyKeys.slice(0, remainingSlots);
+
+        if (!leadsToInsert.length) {
+          await updateRunState(inputData.runId, { leads_generated: 0 });
+          await logRunEvent(inputData.runId, "lead_gen", "success", "Exa Websets: all leads deduplicated", {
+            campaignId: inputData.campaignId,
+            websetId: websetResult.websetId,
+            parsedLeads: parsedLeads.length,
+            durationMs: Date.now() - startedAt,
+          });
+          return { ...inputData, leadsGenerated: 0 };
+        }
+
+        const { data: insertedLeads, error: leadsInsertError } = await supabaseServer
+          .from("leads")
+          .insert(leadsToInsert)
+          .select("id,company_name,company_domain");
+
+        if (leadsInsertError || !insertedLeads?.length) {
+          throw new Error(`Failed to insert webset leads: ${leadsInsertError?.message ?? "no rows returned"}`);
+        }
+
+        // Insert contacts for each lead
+        let contactsInserted = 0;
+        for (let i = 0; i < insertedLeads.length; i++) {
+          const leadId = insertedLeads[i].id;
+          const contacts = contactsByCompanyKey.get(keysToInsert[i]) ?? [];
+          if (!contacts.length) continue;
+          const contactsWithLeadId = contacts.map((c) => ({ ...c, lead_id: leadId }));
+          const { error: contactsErr } = await supabaseServer.from("contacts").insert(contactsWithLeadId);
+          if (!contactsErr) contactsInserted += contactsWithLeadId.length;
+        }
+
+        await updateRunState(inputData.runId, { leads_generated: insertedLeads.length });
+        await logRunEvent(inputData.runId, "lead_gen", "success", "Exa Websets fast-path completed", {
+          campaignId: inputData.campaignId,
+          websetId: websetResult.websetId,
+          websetStatus: websetResult.status,
+          websetItemCount: websetResult.items.length,
+          leadsInserted: insertedLeads.length,
+          contactsInserted,
+          leadsDeduped: parsedLeads.length - dedupedLeads.length,
+          durationMs: Date.now() - startedAt,
+        });
+
+        return { ...inputData, leadsGenerated: insertedLeads.length };
+      }
+      // ── End Exa Websets fast-path ──
+
+      const leadGenSourceHint =
+        leadGenSource === "clado"
+          ? "\nUse Clado and Exa search tools for discovery. Do not use Webset tools."
+          : "";
       const leadGenRuntime = await buildRuntimeAgent("lead_gen");
       await updateRunState(inputData.runId, { config_version_id: leadGenRuntime.config.configVersionId });
       const result = await withRetries(async () => {
         const stream = await leadGenRuntime.agent.stream(
           leadGenRuntime.preparePrompt(
-            `Generate up to ${remainingSlots} leads for this campaign ICP: ${campaign?.icp_description ?? ""}`,
+            `Generate up to ${remainingSlots} leads for this campaign ICP: ${campaign?.icp_description ?? ""}${leadGenSourceHint}`,
           ),
           { structuredOutput: { schema: leadsOutputSchema }, maxSteps: 8 },
         );
@@ -494,41 +597,76 @@ export function buildPeopleGenStep() {
         `Find contacts in these companies: ${JSON.stringify(leads)}`,
       ].join("\n");
 
+      const configuredSource = inputData.runConfig?.source ?? "auto";
+
+      const allPeopleBranches: SourceFallbackBranch<DiscoveredPerson>[] = [
+        {
+          source: "clado",
+          requestedToolKeys: ["clado.search_people", "clado.deep_research"],
+          execute: async (runtime) => {
+            const stream = await runtime.agent.stream(runtime.preparePrompt(discoveryPrompt), {
+              structuredOutput: { schema: peopleOutputSchema },
+              maxSteps: 10,
+            });
+            await consumeAgentStream(stream, inputData.runId, "people_gen");
+            const object = await stream.object;
+            return object.people.map((person) => ({ ...person, source: "clado" as const }));
+          },
+          hasData: (items) => items.some((person) => knownLeadIds.has(person.lead_id)),
+        },
+        {
+          source: "exa",
+          requestedToolKeys: ["exa.search", "exa.research"],
+          execute: async (runtime) => {
+            const stream = await runtime.agent.stream(runtime.preparePrompt(discoveryPrompt), {
+              structuredOutput: { schema: peopleOutputSchema },
+              maxSteps: 10,
+            });
+            await consumeAgentStream(stream, inputData.runId, "people_gen");
+            const object = await stream.object;
+            return object.people.map((person) => ({ ...person, source: "exa" as const }));
+          },
+          hasData: (items) => items.some((person) => knownLeadIds.has(person.lead_id)),
+        },
+        {
+          source: "exa-websets",
+          requestedToolKeys: ["exa.webset_search_people"],
+          execute: async (runtime) => {
+            const stream = await runtime.agent.stream(
+              runtime.preparePrompt(
+                [
+                  discoveryPrompt,
+                  "",
+                  "Use the Exa Webset people search tool to find contacts.",
+                  "Request email enrichment so we get verified work emails.",
+                ].join("\n"),
+              ),
+              {
+                structuredOutput: { schema: peopleOutputSchema },
+                maxSteps: 10,
+              },
+            );
+            await consumeAgentStream(stream, inputData.runId, "people_gen");
+            const object = await stream.object;
+            return object.people.map((person) => ({ ...person, source: "exa" as const }));
+          },
+          hasData: (items) => items.some((person) => knownLeadIds.has(person.lead_id)),
+        },
+      ];
+
+      const peopleBranches =
+        configuredSource === "clado"
+          ? allPeopleBranches.filter((b) => b.source === "clado")
+          : configuredSource === "exa_websets"
+            ? allPeopleBranches.filter((b) => b.source === "exa-websets")
+            : allPeopleBranches.filter((b) => b.source !== "exa-websets");
+
       const discoveryResult = await withRetries(async () =>
         runSourceFallback<DiscoveredPerson>({
           runId: inputData.runId,
           agentType: "people_gen",
           stage: "people_discovery",
-          branches: [
-            {
-              source: "clado",
-              requestedToolKeys: ["clado.search_people", "clado.deep_research"],
-              execute: async (runtime) => {
-                const stream = await runtime.agent.stream(runtime.preparePrompt(discoveryPrompt), {
-                  structuredOutput: { schema: peopleOutputSchema },
-                  maxSteps: 10,
-                });
-                await consumeAgentStream(stream, inputData.runId, "people_gen");
-                const object = await stream.object;
-                return object.people.map((person) => ({ ...person, source: "clado" as const }));
-              },
-              hasData: (items) => items.some((person) => knownLeadIds.has(person.lead_id)),
-            },
-            {
-              source: "exa",
-              requestedToolKeys: ["exa.search", "exa.research"],
-              execute: async (runtime) => {
-                const stream = await runtime.agent.stream(runtime.preparePrompt(discoveryPrompt), {
-                  structuredOutput: { schema: peopleOutputSchema },
-                  maxSteps: 10,
-                });
-                await consumeAgentStream(stream, inputData.runId, "people_gen");
-                const object = await stream.object;
-                return object.people.map((person) => ({ ...person, source: "exa" as const }));
-              },
-              hasData: (items) => items.some((person) => knownLeadIds.has(person.lead_id)),
-            },
-          ],
+          branches: peopleBranches,
         }),
       );
 
@@ -691,41 +829,76 @@ export function buildEnrichmentStep() {
 
       const enrichmentPrompt = `Enrich these people candidates: ${JSON.stringify(limitedContactsToEnrich)}`;
       const knownLeadIds = new Set(limitedContactsToEnrich.map((contact) => contact.lead_id));
+      const enrichConfiguredSource = inputData.runConfig?.source ?? "auto";
+
+      const allEnrichBranches: SourceFallbackBranch<z.infer<typeof contactsOutputSchema>["contacts"][number]>[] = [
+        {
+          source: "clado",
+          requestedToolKeys: ["clado.get_profile", "clado.enrich_contact"],
+          execute: async (runtime) => {
+            const stream = await runtime.agent.stream(runtime.preparePrompt(enrichmentPrompt), {
+              structuredOutput: { schema: contactsOutputSchema },
+              maxSteps: 8,
+            });
+            await consumeAgentStream(stream, inputData.runId, "enrichment");
+            const object = await stream.object;
+            return object.contacts;
+          },
+          hasData: (items) => items.some((contact) => knownLeadIds.has(contact.lead_id)),
+        },
+        {
+          source: "exa",
+          requestedToolKeys: ["exa.search_contents"],
+          execute: async (runtime) => {
+            const stream = await runtime.agent.stream(runtime.preparePrompt(enrichmentPrompt), {
+              structuredOutput: { schema: contactsOutputSchema },
+              maxSteps: 8,
+            });
+            await consumeAgentStream(stream, inputData.runId, "enrichment");
+            const object = await stream.object;
+            return object.contacts;
+          },
+          hasData: (items) => items.some((contact) => knownLeadIds.has(contact.lead_id)),
+        },
+        {
+          source: "exa-websets",
+          requestedToolKeys: ["exa.webset_create", "exa.webset_get_items"],
+          execute: async (runtime) => {
+            const stream = await runtime.agent.stream(
+              runtime.preparePrompt(
+                [
+                  enrichmentPrompt,
+                  "",
+                  "Use the Exa Webset create tool with enrichments to extract email and profile data for these contacts.",
+                  "Use entity type 'person' and add enrichments for email and a brief professional summary.",
+                ].join("\n"),
+              ),
+              {
+                structuredOutput: { schema: contactsOutputSchema },
+                maxSteps: 8,
+              },
+            );
+            await consumeAgentStream(stream, inputData.runId, "enrichment");
+            const object = await stream.object;
+            return object.contacts;
+          },
+          hasData: (items) => items.some((contact) => knownLeadIds.has(contact.lead_id)),
+        },
+      ];
+
+      const enrichBranches =
+        enrichConfiguredSource === "clado"
+          ? allEnrichBranches.filter((b) => b.source === "clado")
+          : enrichConfiguredSource === "exa_websets"
+            ? allEnrichBranches.filter((b) => b.source === "exa-websets")
+            : allEnrichBranches.filter((b) => b.source !== "exa-websets");
+
       const enrichmentResult = await withRetries(async () =>
         runSourceFallback<z.infer<typeof contactsOutputSchema>["contacts"][number]>({
           runId: inputData.runId,
           agentType: "enrichment",
           stage: "enrichment",
-          branches: [
-            {
-              source: "clado",
-              requestedToolKeys: ["clado.get_profile", "clado.enrich_contact"],
-              execute: async (runtime) => {
-                const stream = await runtime.agent.stream(runtime.preparePrompt(enrichmentPrompt), {
-                  structuredOutput: { schema: contactsOutputSchema },
-                  maxSteps: 8,
-                });
-                await consumeAgentStream(stream, inputData.runId, "enrichment");
-                const object = await stream.object;
-                return object.contacts;
-              },
-              hasData: (items) => items.some((contact) => knownLeadIds.has(contact.lead_id)),
-            },
-            {
-              source: "exa",
-              requestedToolKeys: ["exa.search_contents"],
-              execute: async (runtime) => {
-                const stream = await runtime.agent.stream(runtime.preparePrompt(enrichmentPrompt), {
-                  structuredOutput: { schema: contactsOutputSchema },
-                  maxSteps: 8,
-                });
-                await consumeAgentStream(stream, inputData.runId, "enrichment");
-                const object = await stream.object;
-                return object.contacts;
-              },
-              hasData: (items) => items.some((contact) => knownLeadIds.has(contact.lead_id)),
-            },
-          ],
+          branches: enrichBranches,
         }),
       );
       if (enrichmentResult.attempts[0]?.configVersionId) {
@@ -788,6 +961,14 @@ export function buildEnrichmentStep() {
             clado_profile: safeParseJson(enriched.clado_profile),
             exa_company_signals: safeParseJson(enriched.exa_company_signals),
             contact_brief: enriched.contact_brief ?? null,
+            industry: enriched.industry ?? null,
+            website: enriched.website ?? null,
+            product: enriched.product ?? null,
+            pain_point: enriched.pain_point ?? null,
+            company_size: enriched.company_size ?? null,
+            location: enriched.location ?? null,
+            role_summary: enriched.role_summary ?? null,
+            recent_activity: enriched.recent_activity ?? null,
             enriched_at: nowIso,
           },
         });
@@ -820,6 +1001,145 @@ export function buildEnrichmentStep() {
       return { ...inputData, leadsEnriched: matchedUpdates.length };
     } catch (error) {
       await logRunEvent(inputData.runId, "enrichment", "error", "Enrichment failed", {
+        campaignId: inputData.campaignId,
+        error: error instanceof Error ? error.message : String(error),
+        durationMs: Date.now() - startedAt,
+      });
+      throw error;
+    }
+  },
+  });
+}
+
+const deepResearchOutputSchema = z.object({
+  company_description: z.string().min(1),
+  fit_reasoning: z.string().min(1),
+});
+
+export function buildCompanyResearchStep() {
+  return createStep({
+  id: "company-research-step",
+  inputSchema: companyResearchInputSchema,
+  outputSchema: companyResearchOutputSchema,
+  execute: async ({ inputData }) => {
+    const stage = "company_research";
+    const startedAt = Date.now();
+    if (!shouldRunStage(inputData.selectedStages, stage)) {
+      await logRunEvent(inputData.runId, "company_research", "info", "Company research skipped", {
+        campaignId: inputData.campaignId,
+        selectedStages: inputData.selectedStages ?? [],
+      });
+      return { ...inputData, leadsResearched: 0 };
+    }
+    await updateRunState(inputData.runId, { status: "running", current_stage: stage });
+    await logRunEvent(inputData.runId, "company_research", "info", "Company research started", {
+      campaignId: inputData.campaignId,
+    });
+
+    try {
+      const leadIdsFilter = getLeadIdsFilter(inputData.runConfig);
+      let leadsQuery = supabaseServer
+        .from("leads")
+        .select("id,campaign_id,company_name,company_domain,linkedin_url,exa_url,raw_data")
+        .eq("campaign_id", inputData.campaignId)
+        .is("researched_at", null);
+      if (leadIdsFilter?.length) {
+        leadsQuery = leadsQuery.in("id", leadIdsFilter);
+      }
+      const { data: leads } = await leadsQuery;
+
+      if (!leads?.length) {
+        await logRunEvent(inputData.runId, "company_research", "success", "No leads pending company research", {
+          campaignId: inputData.campaignId,
+          durationMs: Date.now() - startedAt,
+        });
+        return { ...inputData, leadsResearched: 0 };
+      }
+
+      const { data: campaign } = await supabaseServer
+        .from("campaigns")
+        .select("id,name,icp_description,scoring_rubric,target_roles,target_industries,company_size,company_signals,disqualify_signals")
+        .eq("id", inputData.campaignId)
+        .single();
+
+      const runtime = await buildRuntimeAgent("people_gen", {
+        requestedToolKeys: ["exa.research", "exa.search"],
+      });
+
+      let researched = 0;
+      for (const lead of leads) {
+        try {
+          const prompt = [
+            "Research this company deeply for outbound campaign fit.",
+            "Use available Exa tools and return only factual synthesis.",
+            "Return JSON with exactly these fields: company_description, fit_reasoning.",
+            "",
+            "Lead context:",
+            `company_name: ${lead.company_name ?? ""}`,
+            `company_domain: ${lead.company_domain ?? ""}`,
+            `linkedin_url: ${lead.linkedin_url ?? ""}`,
+            `exa_url: ${lead.exa_url ?? ""}`,
+            `lead_raw_data: ${JSON.stringify(lead.raw_data ?? {})}`,
+            "",
+            "Campaign context:",
+            `campaign_name: ${campaign?.name ?? ""}`,
+            `icp_description: ${campaign?.icp_description ?? ""}`,
+            `scoring_rubric: ${campaign?.scoring_rubric ?? ""}`,
+            `target_roles: ${JSON.stringify(campaign?.target_roles ?? [])}`,
+            `target_industries: ${JSON.stringify(campaign?.target_industries ?? [])}`,
+            `company_size: ${campaign?.company_size ?? ""}`,
+            `company_signals: ${campaign?.company_signals ?? ""}`,
+            `disqualify_signals: ${campaign?.disqualify_signals ?? ""}`,
+          ].join("\n");
+
+          const stream = await runtime.agent.stream(runtime.preparePrompt(prompt), {
+            structuredOutput: { schema: deepResearchOutputSchema },
+            maxSteps: 8,
+          });
+          await consumeAgentStream(stream, inputData.runId, "company_research");
+          const result = await stream.object;
+
+          await supabaseServer
+            .from("leads")
+            .update({
+              company_description: result.company_description,
+              fit_reasoning: result.fit_reasoning,
+              researched_at: new Date().toISOString(),
+            })
+            .eq("id", lead.id);
+
+          researched++;
+          await logRunEvent(inputData.runId, "company_research", "info", "Lead deep research completed", {
+            leadId: lead.id,
+            companyName: lead.company_name,
+          });
+        } catch (leadError) {
+          const message = leadError instanceof Error ? leadError.message : String(leadError);
+          await supabaseServer
+            .from("leads")
+            .update({
+              researched_at: new Date().toISOString(),
+              fit_reasoning: `Deep research failed: ${message}`,
+            })
+            .eq("id", lead.id);
+          await logRunEvent(inputData.runId, "company_research", "warn", "Lead deep research failed, continuing", {
+            leadId: lead.id,
+            companyName: lead.company_name,
+            error: message,
+          });
+        }
+      }
+
+      await logRunEvent(inputData.runId, "company_research", "success", "Company research completed", {
+        campaignId: inputData.campaignId,
+        leadsResearched: researched,
+        leadsTotal: leads.length,
+        durationMs: Date.now() - startedAt,
+      });
+
+      return { ...inputData, leadsResearched: researched };
+    } catch (error) {
+      await logRunEvent(inputData.runId, "company_research", "error", "Company research failed", {
         campaignId: inputData.campaignId,
         error: error instanceof Error ? error.message : String(error),
         durationMs: Date.now() - startedAt,
@@ -903,12 +1223,42 @@ export function buildScoringStep() {
         .eq("id", inputData.campaignId)
         .single();
 
+      // Fetch company-level deep research (company_description + fit_reasoning) for each lead
+      const scoringLeadIds = Array.from(new Set(limitedContactsToScore.map((c) => c.lead_id)));
+      const { data: scoringLeads } = await supabaseServer
+        .from("leads")
+        .select("id,company_description,fit_reasoning")
+        .in("id", scoringLeadIds);
+      const leadResearchMap = new Map(
+        (scoringLeads ?? []).map((lead) => [lead.id, {
+          company_description: lead.company_description as string | null,
+          fit_reasoning: lead.fit_reasoning as string | null,
+        }]),
+      );
+
+      // Enrich contacts with lead-level research for the scoring agent
+      const contactsWithResearch = limitedContactsToScore.map((contact) => {
+        const research = leadResearchMap.get(contact.lead_id);
+        return {
+          ...contact,
+          company_description: research?.company_description ?? null,
+          fit_reasoning: research?.fit_reasoning ?? null,
+        };
+      });
+
       const scoringRuntime = await buildRuntimeAgent("scoring");
       await updateRunState(inputData.runId, { config_version_id: scoringRuntime.config.configVersionId });
       const result = await withRetries(async () => {
         const stream = await scoringRuntime.agent.stream(
           scoringRuntime.preparePrompt(
-            `Score contacts with this rubric:\n${campaign?.scoring_rubric ?? ""}\nData:${JSON.stringify(limitedContactsToScore)}`,
+            [
+              `Score contacts with this rubric:`,
+              campaign?.scoring_rubric ?? "",
+              "",
+              "Each contact includes company_description and fit_reasoning from deep company research. Use these to inform your scoring — they contain analysis of how well the company fits the ICP.",
+              "",
+              `Data:${JSON.stringify(contactsWithResearch)}`,
+            ].join("\n"),
           ),
           { structuredOutput: { schema: scoresOutputSchema }, maxSteps: 8 },
         );
@@ -1014,7 +1364,7 @@ export function buildEmailStep() {
       const { data: campaign } = await supabaseServer
         .from("campaigns")
         .select(
-          "account_ids,daily_send_limit,value_prop,icp_description,mailbox_selection_mode,primary_account_id,template_experiment_id,test_mode_enabled,test_recipient_emails",
+          "company_id,account_ids,daily_send_limit,value_prop,icp_description,mailbox_selection_mode,primary_account_id,template_experiment_id,test_mode_enabled,test_recipient_emails,persona_name,persona_title,persona_company",
         )
         .eq("id", inputData.campaignId)
         .single();
@@ -1098,7 +1448,7 @@ export function buildEmailStep() {
       const { data: contacts } = await supabaseServer
         .from("contacts")
         .select(
-          "id,lead_id,name,first_name,email,email_verified,company_name,headline,contact_brief,exa_company_signals,enriched_at",
+          "id,lead_id,name,first_name,email,email_verified,company_name,headline,contact_brief,exa_company_signals,enriched_at,industry,website,product,pain_point,company_size,location,role_summary,recent_activity",
         )
         .in("id", contactIds);
 
@@ -1150,40 +1500,45 @@ export function buildEmailStep() {
           emailsSent: 0,
         };
       }
-      const leadIds = Array.from(new Set(limitedContacts.map((contact) => contact.lead_id).filter(Boolean)));
-      const { data: leadRows } = leadIds.length
-        ? await supabaseServer
-            .from("leads")
-            .select("id,company_name,company_domain,linkedin_url,exa_url,raw_data")
-            .in("id", leadIds)
-        : { data: [] as Array<Record<string, unknown>> };
-      const leadById = new Map((leadRows ?? []).map((lead) => [String(lead.id), lead]));
       const useTemplateExperiments = env.ENABLE_TEMPLATE_EXPERIMENTS !== "false";
       const activeExperiment = useTemplateExperiments
         ? await getActiveExperimentForCampaign(inputData.campaignId)
         : null;
 
-      let coldEmailRuntime: Awaited<ReturnType<typeof buildRuntimeAgent>> | null = null;
-      try {
-        coldEmailRuntime = await buildRuntimeAgent("cold_email");
-        await updateRunState(inputData.runId, { config_version_id: coldEmailRuntime.config.configVersionId });
-        await logRunEvent(inputData.runId, "cold_email", "info", "Email personalization runtime loaded", {
-          configVersionId: coldEmailRuntime.config.configVersionId,
-          toolsEnabled: coldEmailRuntime.toolKeys,
-          toolsRejected: coldEmailRuntime.rejectedToolKeys,
-        });
-      } catch (runtimeError) {
-        await logRunEvent(inputData.runId, "cold_email", "warn", "Email personalization runtime unavailable; using template fallback", {
-          error: runtimeError instanceof Error ? runtimeError.message : String(runtimeError),
-        });
+      // Fallback: if no experiment, use the most recent active template for this company
+      let fallbackSubjectTemplate: string | null = null;
+      let fallbackBodyTemplate: string | null = null;
+      if (!activeExperiment && campaign?.company_id) {
+        const { data: fallbackTemplate } = await supabaseServer
+          .from("email_templates")
+          .select("id,name,active_version_id")
+          .eq("company_id", campaign.company_id as string)
+          .eq("status", "active")
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (fallbackTemplate?.active_version_id) {
+          const { data: fallbackVersion } = await supabaseServer
+            .from("email_template_versions")
+            .select("subject_template,body_template")
+            .eq("id", fallbackTemplate.active_version_id)
+            .single();
+          if (fallbackVersion) {
+            fallbackSubjectTemplate = fallbackVersion.subject_template;
+            fallbackBodyTemplate = fallbackVersion.body_template;
+            await logRunEvent(inputData.runId, "cold_email", "info", "Using fallback template (no experiment active)", {
+              templateId: fallbackTemplate.id,
+              templateName: fallbackTemplate.name,
+              versionId: fallbackTemplate.active_version_id,
+            });
+          }
+        }
       }
 
       const templateVersionCache = new Map<
         string,
         { id: string; subject_template: string; body_template: string; prompt_context: string | null }
       >();
-      const priorityTiers = new Set(["hot", "warm"]);
-      let routedToPriorityPath = 0;
       let routedToTemplatePath = 0;
       const sent: Array<{
         contactId: string;
@@ -1195,7 +1550,9 @@ export function buildEmailStep() {
       const selectedVariantIds: string[] = [];
       const selectedTemplateVersionIds: string[] = [];
 
+      let sendFailures = 0;
       for (const contact of limitedContacts) {
+        try {
         const account = await selectSendingAccount(inputData.campaignId, {
           contactId: contact.id,
           preferredAccountId: campaign?.primary_account_id as string | null,
@@ -1203,9 +1560,9 @@ export function buildEmailStep() {
 
         let variantId: string | null = null;
         let templateVersionId: string | null = null;
-        let subjectTemplate = "Quick idea for {{company_name}}";
-        let bodyTemplate =
-          "<p>Hi {{first_name}},</p><p>I had one idea for {{company_name}} that could help with your current priorities.</p><p>Worth a quick chat this week?</p>";
+        let subjectTemplate = fallbackSubjectTemplate ?? "Quick idea for {{company_name}}";
+        let bodyTemplate = fallbackBodyTemplate
+          ?? "<p>Hi {{first_name}},</p><p>I had one idea for {{company_name}} that could help with your current priorities.</p><p>Worth a quick chat this week?</p>";
 
         if (activeExperiment) {
           const variant = await chooseVariant({
@@ -1234,90 +1591,41 @@ export function buildEmailStep() {
           }
         }
 
-        const variables = {
+        const variables: Record<string, string> = {
           name: contact.name ?? "",
           first_name: contact.first_name ?? contact.name ?? "",
           company_name: contact.company_name ?? "",
           headline: contact.headline ?? "",
           recommended_angle: String(scoreByContact.get(contact.id)?.recommended_angle ?? ""),
           value_prop: String(campaign?.value_prop ?? ""),
+          industry: contact.industry ?? "",
+          website: contact.website ?? "",
+          product: contact.product ?? "",
+          pain_point: contact.pain_point ?? "",
+          company_size: contact.company_size ?? "",
+          location: contact.location ?? "",
+          role_summary: contact.role_summary ?? "",
+          recent_activity: contact.recent_activity ?? "",
+          persona_name: String(campaign?.persona_name ?? ""),
+          persona_title: String(campaign?.persona_title ?? ""),
+          persona_company: String(campaign?.persona_company ?? ""),
         };
-        const fallbackSubject = renderTemplate(subjectTemplate, variables).trim() || "Quick idea";
-        const { bodyText: fallbackBodyText } = renderTemplateBodies(bodyTemplate, variables);
-        if (!fallbackBodyText) continue;
 
-        let subject = fallbackSubject;
-        let finalBodyText = fallbackBodyText;
-        let personalizationSource: "agent_prompt" | "template_fallback" | "template_bulk_policy" = "template_fallback";
-        const scoreTier = String(scoreByContact.get(contact.id)?.tier ?? "").toLowerCase();
-        const usePriorityPersonalizationPath = priorityTiers.has(scoreTier);
-
-        if (coldEmailRuntime && usePriorityPersonalizationPath) {
-          try {
-            const leadContext = leadById.get(String(contact.lead_id));
-            const score = scoreByContact.get(contact.id);
-            const templateContext = templateVersionId ? templateVersionCache.get(templateVersionId) : null;
-            const personalizationPrompt = [
-              "Write a highly personalized outbound email in plain text.",
-              "Return JSON that strictly matches schema: { subject, bodyText }.",
-              "Constraints:",
-              "- No HTML tags, markdown, or placeholders like {{first_name}}.",
-              "- Keep body under 120 words.",
-              "- Use specific context from person + company below.",
-              "- Include one clear CTA for a short call.",
-              "",
-              "Contact context:",
-              `first_name: ${compactText(contact.first_name ?? contact.name)}`,
-              `full_name: ${compactText(contact.name)}`,
-              `headline: ${compactText(contact.headline)}`,
-              `contact_brief: ${compactText(contact.contact_brief)}`,
-              `contact_email: ${compactText(contact.email)}`,
-              "",
-              "Company context:",
-              `company_name: ${compactText(contact.company_name ?? leadContext?.company_name)}`,
-              `company_domain: ${compactText(leadContext?.company_domain)}`,
-              `company_signals: ${compactText(contact.exa_company_signals)}`,
-              `lead_raw_data: ${compactText(leadContext?.raw_data, 1200)}`,
-              "",
-              "Campaign context:",
-              `value_prop: ${compactText(campaign?.value_prop)}`,
-              `icp_description: ${compactText(campaign?.icp_description, 1200)}`,
-              `recommended_angle: ${compactText(score?.recommended_angle)}`,
-              `score_tier: ${compactText(score?.tier)}`,
-              "",
-              "Template context:",
-              `template_subject_hint: ${compactText(fallbackSubject)}`,
-              `template_body_hint: ${compactText(fallbackBodyText, 1200)}`,
-              `template_prompt_context: ${compactText(templateContext?.prompt_context, 1200)}`,
-            ].join("\n");
-
-            const draftStream = await coldEmailRuntime.agent.stream(coldEmailRuntime.preparePrompt(personalizationPrompt), {
-              structuredOutput: { schema: personalizedEmailDraftSchema },
-              maxSteps: 6,
-            });
-            await consumeAgentStream(draftStream, inputData.runId, "cold_email");
-            const draft = await draftStream.object;
-            const draftedSubject = draft.subject.trim();
-            const draftedBody = draft.bodyText.trim();
-            if (draftedSubject && draftedBody) {
-              subject = draftedSubject;
-              finalBodyText = draftedBody;
-              personalizationSource = "agent_prompt";
-              routedToPriorityPath += 1;
-            }
-          } catch (personalizationError) {
-            await logRunEvent(inputData.runId, "cold_email", "warn", "Prompt personalization failed; using template fallback", {
-              contactId: contact.id,
-              error: personalizationError instanceof Error ? personalizationError.message : String(personalizationError),
-            });
-            routedToTemplatePath += 1;
-          }
-        } else if (!usePriorityPersonalizationPath) {
-          personalizationSource = "template_bulk_policy";
-          routedToTemplatePath += 1;
-        } else {
-          routedToTemplatePath += 1;
+        // Validate template variables — warn if any placeholders have empty data
+        const validation = validateTemplateVariables(subjectTemplate, bodyTemplate, variables);
+        if (!validation.valid) {
+          await logRunEvent(inputData.runId, "cold_email", "warn", "Template has placeholders with missing data", {
+            contactId: contact.id,
+            missing: validation.missing,
+            empty: validation.empty,
+          });
         }
+
+        const subject = renderTemplate(subjectTemplate, variables).trim() || "Quick idea";
+        const { bodyText: finalBodyText } = renderTemplateBodies(bodyTemplate, variables);
+        if (!finalBodyText) continue;
+        const personalizationSource = "template" as const;
+        routedToTemplatePath += 1;
 
         const deliveryTargets = testModeEnabled
           ? testRecipientEmails
@@ -1340,7 +1648,11 @@ export function buildEmailStep() {
             personalizationSource,
             signatureApplied: Boolean(account.signature_enabled_by_default && account.signature_html),
           });
-          const sendResult = await sendEmailWithComposio(
+          const sendFn =
+            (account.provider ?? "gmail_composio") === "agentmail"
+              ? sendEmailWithAgentMail
+              : sendEmailWithComposio;
+          const sendResult = await sendFn(
             account.id,
             targetEmail,
             subject,
@@ -1420,6 +1732,15 @@ export function buildEmailStep() {
             isTestSend: testModeEnabled,
           });
         }
+        } catch (contactError) {
+          sendFailures++;
+          await logRunEvent(inputData.runId, "cold_email", "warn", "Email send failed for contact, continuing to next", {
+            contactId: contact.id,
+            contactName: contact.name,
+            contactEmail: contact.email,
+            error: contactError instanceof Error ? contactError.message : String(contactError),
+          });
+        }
       }
 
       await updateRunState(inputData.runId, { emails_sent: sent.length });
@@ -1434,6 +1755,7 @@ export function buildEmailStep() {
       await logRunEvent(inputData.runId, "cold_email", "success", "Email stage completed", {
         campaignId: inputData.campaignId,
         emailsSent: sent.length,
+        sendFailures,
         runConfiguredSendCap: inputData.runConfig?.email?.maxSends ?? null,
         mailboxMode: campaign?.mailbox_selection_mode ?? "least_loaded",
         selectedAccountIds: Array.from(new Set(sent.map((item) => item.accountId))),
@@ -1441,8 +1763,6 @@ export function buildEmailStep() {
         selectedTemplateVersionIds: Array.from(new Set(selectedTemplateVersionIds)),
         experimentId: activeExperiment?.id ?? null,
         renderMode: "text/plain",
-        priorityTiers: Array.from(priorityTiers),
-        routedToPriorityPath,
         routedToTemplatePath,
         testModeEnabled,
         testRecipientEmails,
@@ -1470,6 +1790,7 @@ export function buildEmailStep() {
 const leadGenStep = buildLeadGenStep();
 const peopleGenStep = buildPeopleGenStep();
 const enrichmentStep = buildEnrichmentStep();
+const companyResearchStep = buildCompanyResearchStep();
 const scoringStep = buildScoringStep();
 const emailStep = buildEmailStep();
 
@@ -1481,6 +1802,7 @@ export const salesPipelineWorkflow = createWorkflow({
   .then(leadGenStep)
   .then(peopleGenStep)
   .then(enrichmentStep)
+  .then(companyResearchStep)
   .then(scoringStep)
   .then(emailStep)
   .commit();

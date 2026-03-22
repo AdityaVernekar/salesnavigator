@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LeadsTable, type LeadRow } from "@/components/leads/leads-table";
 import { RunPipelineFromLeadsDialog } from "@/components/leads/run-pipeline-from-leads-dialog";
 import { Button } from "@/components/ui/button";
+import type { ExecutablePipelineStage } from "@/lib/pipeline/stages";
 
 export function LeadsTableShell({ rows }: { rows: LeadRow[] }) {
   const router = useRouter();
@@ -15,18 +16,8 @@ export function LeadsTableShell({ rows }: { rows: LeadRow[] }) {
   const [error, setError] = useState<string | null>(null);
 
   const runPipelineOnSelection = async (
-    startStage:
-      | "lead_generation"
-      | "people_discovery"
-      | "enrichment"
-      | "scoring"
-      | "email",
-    endStage:
-      | "lead_generation"
-      | "people_discovery"
-      | "enrichment"
-      | "scoring"
-      | "email",
+    startStage: ExecutablePipelineStage,
+    endStage: ExecutablePipelineStage,
   ) => {
     const leadIds = Array.from(selectedIds);
     if (!leadIds.length) return;

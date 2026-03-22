@@ -148,21 +148,17 @@ export async function processNextStageJob(): Promise<StageWorkerResult> {
   }
 
   try {
-    const workflowName = getStageWorkflowName(stage);
-    if (!workflowName) {
-      throw new Error(`No stage workflow is configured for stage (${stage})`);
-    }
-    await logRunEvent(runId, "worker", "info", "Stage job claimed", {
-      stageJobId,
-      stage,
-      attempt,
-      payload,
-      queueDepth,
-      claimSource,
-      workflowName,
-    });
-
+    // Email stage is handled specially — it creates send jobs instead of running a workflow
     if (stage === "email") {
+      await logRunEvent(runId, "worker", "info", "Stage job claimed", {
+        stageJobId,
+        stage,
+        attempt,
+        payload,
+        queueDepth,
+        claimSource,
+        workflowName: "email-send-job",
+      });
       const sendRows = await createSendJobs([
         {
           runId,
@@ -198,9 +194,23 @@ export async function processNextStageJob(): Promise<StageWorkerResult> {
       };
     }
 
+    const workflowName = getStageWorkflowName(stage);
+    if (!workflowName) {
+      throw new Error(`No stage workflow is configured for stage (${stage})`);
+    }
+    await logRunEvent(runId, "worker", "info", "Stage job claimed", {
+      stageJobId,
+      stage,
+      attempt,
+      payload,
+      queueDepth,
+      claimSource,
+      workflowName,
+    });
+
     await updateRunState(runId, {
       status: "running",
-      current_stage: stage as "lead_generation" | "people_discovery" | "enrichment" | "scoring" | "email",
+      current_stage: stage as "lead_generation" | "people_discovery" | "enrichment" | "company_research" | "scoring" | "email",
       error: null,
     });
 

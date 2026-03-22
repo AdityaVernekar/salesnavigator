@@ -12,6 +12,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { ExecutablePipelineStage } from "@/lib/pipeline/stages";
 import type { PipelineRunConfig } from "@/lib/pipeline/run-config";
 
@@ -29,6 +36,7 @@ const stageLabels: Record<ExecutablePipelineStage, string> = {
   lead_generation: "Lead Generation",
   people_discovery: "People Discovery",
   enrichment: "Enrichment",
+  company_research: "Company Research",
   scoring: "Scoring",
   email: "Email",
 };
@@ -65,6 +73,7 @@ export function PipelineRunConfigDialog({
   const [enrichmentLimit, setEnrichmentLimit] = useState("25");
   const [scoringLimit, setScoringLimit] = useState("25");
   const [emailLimit, setEmailLimit] = useState(String(defaultEmailSendLimit));
+  const [source, setSource] = useState<"auto" | "clado" | "exa_websets">("auto");
   const [emailUseTestMode, setEmailUseTestMode] = useState(false);
   const [emailTestRecipients, setEmailTestRecipients] = useState("");
 
@@ -72,6 +81,10 @@ export function PipelineRunConfigDialog({
 
   const submitConfig = async () => {
     const runConfig: PipelineRunConfig = {};
+
+    if (source !== "auto") {
+      runConfig.source = source;
+    }
 
     if (selectedSet.has("lead_generation")) {
       runConfig.leadGeneration = {
@@ -113,6 +126,29 @@ export function PipelineRunConfigDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {(selectedSet.has("lead_generation") ||
+            selectedSet.has("people_discovery") ||
+            selectedSet.has("enrichment")) && (
+            <div className="space-y-1">
+              <Label htmlFor="source">Data source</Label>
+              <Select
+                value={source}
+                onValueChange={(v) =>
+                  setSource(v as "auto" | "clado" | "exa_websets")
+                }
+                disabled={isSubmitting}
+              >
+                <SelectTrigger id="source">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto (Clado first, fallback to Exa)</SelectItem>
+                  <SelectItem value="clado">Clado</SelectItem>
+                  <SelectItem value="exa_websets">Exa Websets</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {selectedSet.has("lead_generation") ? (
             <div className="space-y-1">
               <Label htmlFor="lead-limit">Max leads to generate</Label>

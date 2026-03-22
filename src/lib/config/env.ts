@@ -17,11 +17,10 @@ export const env = {
   CRON_SECRET: process.env.CRON_SECRET ?? "",
   SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL ?? "",
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-  REDIS_HOST:
-    process.env.REDIS_HOST ?? "master.sales-navy.g3u5fs.aps1.cache.amazonaws.com",
-  REDIS_PORT: process.env.REDIS_PORT ?? "6379",
+  REDIS_HOST: process.env.REDIS_HOST ?? "localhost",
+  REDIS_PORT: process.env.REDIS_PORT ?? "6380",
   REDIS_PASSWORD: process.env.REDIS_PASSWORD ?? "",
-  REDIS_TLS_ENABLED: process.env.REDIS_TLS_ENABLED ?? "true",
+  REDIS_TLS_ENABLED: process.env.REDIS_TLS_ENABLED ?? "false",
   ENABLE_TEMPLATE_EXPERIMENTS: process.env.ENABLE_TEMPLATE_EXPERIMENTS ?? "true",
   PIPELINE_EXECUTION_MODE: process.env.PIPELINE_EXECUTION_MODE ?? "legacy",
   PIPELINE_WORKER_ID: process.env.PIPELINE_WORKER_ID ?? "pipeline-worker",
@@ -35,4 +34,5 @@ export const env = {
   WORKER_EXECUTION_OWNER: process.env.WORKER_EXECUTION_OWNER ?? "app",
   WORKER_SERVICE_POLL_MS: process.env.WORKER_SERVICE_POLL_MS ?? "3000",
   WORKER_SERVICE_HEARTBEAT_MS: process.env.WORKER_SERVICE_HEARTBEAT_MS ?? "30000",
+  SUPERMEMORY_API_KEY: process.env.SUPERMEMORY_API_KEY ?? "",
 };

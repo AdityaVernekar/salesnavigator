@@ -7,6 +7,17 @@ export const DEFAULT_TEMPLATE_PLACEHOLDERS = [
   "headline",
   "recommended_angle",
   "value_prop",
+  "industry",
+  "website",
+  "product",
+  "pain_point",
+  "company_size",
+  "location",
+  "role_summary",
+  "recent_activity",
+  "persona_name",
+  "persona_title",
+  "persona_company",
 ] as const;
 
 export type EmailTemplateRecord = {
@@ -50,6 +61,23 @@ export function assertTemplatePlaceholders(subjectTemplate: string, bodyTemplate
     throw new Error(`Invalid placeholders: ${invalid.join(", ")}`);
   }
   return placeholders;
+}
+
+export function validateTemplateVariables(
+  subjectTemplate: string,
+  bodyTemplate: string,
+  variables: Record<string, string | null | undefined>,
+): { valid: boolean; missing: string[]; empty: string[] } {
+  const placeholders = extractPlaceholders(subjectTemplate, bodyTemplate);
+  const missing = placeholders.filter((p) => !(p in variables));
+  const empty = placeholders.filter(
+    (p) => p in variables && !variables[p],
+  );
+  return {
+    valid: missing.length === 0 && empty.length === 0,
+    missing,
+    empty,
+  };
 }
 
 export function renderTemplate(source: string, variables: Record<string, string | null | undefined>) {

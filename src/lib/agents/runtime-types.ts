@@ -19,7 +19,11 @@ export type NativeToolKey =
   | "clado.get_post_reactions"
   | "gmail.send"
   | "gmail.read"
-  | "slack.notify";
+  | "slack.notify"
+  | "exa.webset_create"
+  | "exa.webset_get_items"
+  | "exa.webset_search_people"
+  | "exa.webset_search_companies";
 
 export type ToolProvider = "native" | "mcp";
 

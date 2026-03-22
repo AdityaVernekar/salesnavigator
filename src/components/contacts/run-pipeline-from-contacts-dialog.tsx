@@ -27,6 +27,7 @@ const STAGE_LABELS: Record<ExecutablePipelineStage, string> = {
   lead_generation: "Lead generation",
   people_discovery: "People discovery",
   enrichment: "Enrichment",
+  company_research: "Company research",
   scoring: "Scoring",
   email: "Email",
 };

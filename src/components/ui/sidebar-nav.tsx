@@ -15,6 +15,9 @@ const navItems = [
   { href: "/campaigns", label: "Campaigns" },
   { href: "/settings", label: "Settings" },
   { href: "/inbox", label: "Inbox" },
+  { href: "/enrollments", label: "Enrollments" },
+  { href: "/enrich", label: "Enrich Profile" },
+  { href: "/test/exa-websets", label: "Exa Websets Test" },
 ];
 
 export function SidebarNav() {

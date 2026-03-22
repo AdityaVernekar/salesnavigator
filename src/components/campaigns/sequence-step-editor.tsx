@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,17 +41,13 @@ export function SequenceStepEditor({
   defaultSteps?: SequenceStep[];
   onStepsChange?: (steps: SequenceStep[]) => void;
 }) {
-  const [steps, setStepsInternal] = useState<SequenceStep[]>(
+  const [steps, setSteps] = useState<SequenceStep[]>(
     defaultSteps?.length ? defaultSteps : [emptyStep(0, 0)],
   );
 
-  function setSteps(updater: SequenceStep[] | ((prev: SequenceStep[]) => SequenceStep[])) {
-    setStepsInternal((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      onStepsChange?.(next);
-      return next;
-    });
-  }
+  useEffect(() => {
+    onStepsChange?.(steps);
+  }, [steps, onStepsChange]);
 
   function updateStep(index: number, updates: Partial<SequenceStep>) {
     setSteps((prev) =>
@@ -75,11 +71,13 @@ export function SequenceStepEditor({
     );
   }
 
-  function loadPreset(presetName: string) {
-    const preset = WORKFLOW_PRESETS.find((p) => p.name === presetName);
-    if (preset) {
-      setSteps(preset.steps.map((s) => ({ ...s })));
+  function loadPreset(presetId: string) {
+    const preset = WORKFLOW_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    if (steps.length > 1 || steps[0]?.subject_override) {
+      if (!window.confirm("This will replace your current sequence steps. Continue?")) return;
     }
+    setSteps(preset.steps.map((s) => ({ ...s })));
   }
 
   return (
@@ -92,8 +90,8 @@ export function SequenceStepEditor({
           </SelectTrigger>
           <SelectContent>
             {WORKFLOW_PRESETS.map((preset) => (
-              <SelectItem key={preset.name} value={preset.name}>
-                {preset.name}
+              <SelectItem key={preset.id} value={preset.id}>
+                {preset.name} — {preset.steps.length} steps
               </SelectItem>
             ))}
           </SelectContent>

@@ -33,7 +33,7 @@ export function WorkflowCanvas({
   const proOptions = useMemo(() => ({ hideAttribution: true }), []);
 
   return (
-    <div className="h-[600px] w-full rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">
+    <div className="h-[600px] w-full rounded-lg border border-zinc-200 bg-white overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -47,7 +47,7 @@ export function WorkflowCanvas({
         maxZoom={1.5}
         defaultEdgeOptions={{
           type: "smoothstep",
-          style: { stroke: "#52525b", strokeWidth: 2 },
+          style: { stroke: "#d4d4d8", strokeWidth: 2 },
         }}
         nodesDraggable={true}
         nodesConnectable={false}
@@ -57,16 +57,16 @@ export function WorkflowCanvas({
           variant={BackgroundVariant.Dots}
           gap={20}
           size={1}
-          color="#27272a"
+          color="#e4e4e7"
         />
         <Controls
-          className="!bg-zinc-900 !border-zinc-700 !rounded-lg !shadow-lg [&>button]:!bg-zinc-800 [&>button]:!border-zinc-700 [&>button]:!text-zinc-300 [&>button:hover]:!bg-zinc-700"
+          className="!bg-white !border-zinc-200 !rounded-lg !shadow-sm [&>button]:!bg-white [&>button]:!border-zinc-200 [&>button]:!text-zinc-600 [&>button:hover]:!bg-zinc-50"
           position="top-right"
         />
         <MiniMap
-          className="!bg-zinc-900 !border-zinc-700 !rounded-lg"
-          nodeColor="#3f3f46"
-          maskColor="rgba(0, 0, 0, 0.7)"
+          className="!bg-white !border-zinc-200 !rounded-lg"
+          nodeColor="#e4e4e7"
+          maskColor="rgba(255, 255, 255, 0.7)"
           position="bottom-right"
         />
       </ReactFlow>

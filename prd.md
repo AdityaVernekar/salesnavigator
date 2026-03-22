@@ -1,4 +1,4 @@
-# SalesNav AI — Multi-Agent Sales Automation Platform
+# AutoReach — Open-Source Multi-Agent Sales Automation Framework
 
 > **Purpose:** Replace the entire outbound sales team with autonomous AI agents.  
 > **Mode:** Internal tool — users connect Gmail accounts, create campaigns, and agents handle everything from lead gen to closing replies.  

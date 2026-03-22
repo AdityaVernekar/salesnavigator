@@ -1,7 +1,8 @@
 import { readInboxWithComposio } from "@/lib/composio/gmail";
+import { env } from "@/lib/config/env";
 import { supabaseServer } from "@/lib/supabase/server";
 
-export type InboxView = "sent" | "replies";
+export type InboxView = "sent" | "replies" | "needs_reply";
 
 export type InboxQuery = {
   companyId?: string;
@@ -199,6 +200,11 @@ export async function listInboxItems(query: InboxQuery): Promise<{ items: InboxI
   }
   if (query.view === "replies") {
     request = request.not("replied_at", "is", null);
+  }
+  if (query.view === "needs_reply") {
+    request = request
+      .not("replied_at", "is", null)
+      .eq("enrollment:enrollments.status", "replied");
   }
   if (query.campaignId) {
     request = request.eq("campaign_id", query.campaignId);
@@ -405,7 +411,7 @@ export async function syncInboxReplies(options?: { campaignId?: string; maxAccou
 
   const { data: sentRows, error: sentError } = await supabaseServer
     .from("emails_sent")
-    .select("id,campaign_id,enrollment_id,gmail_thread_id,replied_at,last_reply_at,reply_message_id,sent_at")
+    .select("id,contact_id,campaign_id,enrollment_id,gmail_thread_id,replied_at,last_reply_at,reply_message_id,sent_at")
     .in("gmail_thread_id", threadIds);
   if (sentError) throw new Error(sentError.message);
 
@@ -452,6 +458,21 @@ export async function syncInboxReplies(options?: { campaignId?: string; maxAccou
       updatedRows += 1;
       const enrollmentId = String(target.enrollment_id ?? "");
       if (enrollmentId) enrollmentIdsToMark.add(enrollmentId);
+
+      // Ingest reply into Supermemory for future agent context
+      const contactId = String(target.contact_id ?? "");
+      if (contactId && env.SUPERMEMORY_API_KEY) {
+        try {
+          const { Supermemory } = await import("supermemory");
+          const sm = new Supermemory({ apiKey: env.SUPERMEMORY_API_KEY });
+          await sm.memories.add({
+            content: `Email reply from ${reply.fromEmail}: ${reply.snippet}`,
+            containerTag: contactId,
+          });
+        } catch {
+          // Supermemory ingestion is best-effort; don't break reply sync
+        }
+      }
     }
   }
 

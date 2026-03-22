@@ -37,6 +37,14 @@ type Contact = {
   company_name: string | null;
   headline: string | null;
   timezone: string | null;
+  industry: string | null;
+  website: string | null;
+  product: string | null;
+  pain_point: string | null;
+  company_size: string | null;
+  location: string | null;
+  role_summary: string | null;
+  recent_activity: string | null;
 };
 
 export type StepProcessResult = {
@@ -68,7 +76,7 @@ export async function processEnrollmentStep(
   // Load contact
   const { data: contact } = await supabaseServer
     .from("contacts")
-    .select("id,name,first_name,email,company_name,headline,timezone")
+    .select("id,name,first_name,email,company_name,headline,timezone,industry,website,product,pain_point,company_size,location,role_summary,recent_activity")
     .eq("id", enrollment.contact_id)
     .single();
 
@@ -242,5 +250,13 @@ function buildTemplateVariables(
     persona_name: campaign.persona_name,
     persona_title: campaign.persona_title,
     persona_company: campaign.persona_company,
+    industry: contact.industry,
+    website: contact.website,
+    product: contact.product,
+    pain_point: contact.pain_point,
+    company_size: contact.company_size,
+    location: contact.location,
+    role_summary: contact.role_summary,
+    recent_activity: contact.recent_activity,
   };
 }

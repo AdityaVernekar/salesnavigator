@@ -1,4 +1,12 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
   web:
     build:
       context: .
@@ -19,11 +27,16 @@ services:
         COMPOSIO_API_KEY: ${COMPOSIO_API_KEY}
         ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY}
         CRON_SECRET: ${CRON_SECRET}
-    image: salesnav:local
+    image: autoreach:local
     command: npm run dev -- --hostname 0.0.0.0 --port 3002
+    depends_on:
+      - redis
     environment:
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_TLS_ENABLED: "false"
     ports:
       - "3002:3002"
     volumes:
@@ -54,11 +67,20 @@ services:
         COMPOSIO_API_KEY: ${COMPOSIO_API_KEY}
         ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY}
         CRON_SECRET: ${CRON_SECRET}
-    image: salesnav:local
+    image: autoreach:local
     command: npm run worker:nest:dev
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 6g
     environment:
       NODE_OPTIONS: --max-old-space-size=4096
       CHOKIDAR_USEPOLLING: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_TLS_ENABLED: "false"
     ports:
       - "4010:4010"
     volumes:
@@ -67,3 +89,6 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+
+volumes:
+  redis-data:

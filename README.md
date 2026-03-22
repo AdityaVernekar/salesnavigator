@@ -57,7 +57,7 @@ set -a
 source .env
 set +a
 
-docker build -t salesnav:local \
+docker build -t autoreach:local \
   --build-arg NEXT_PUBLIC_SUPABASE_URL \
   --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY \
   --build-arg SUPABASE_SERVICE_ROLE_KEY \
@@ -80,12 +80,12 @@ docker build -t salesnav:local \
 
 ```bash
 # Web app
-docker run --rm --env-file .env -p 3000:3000 salesnav:local npm run start
+docker run --rm --env-file .env -p 3000:3000 autoreach:local npm run start
 ```
 
 ```bash
 # Worker backend
-docker run --rm --env-file .env -p 4010:4010 salesnav:local npm run worker:nest
+docker run --rm --env-file .env -p 4010:4010 autoreach:local npm run worker:nest
 ```
 
 ### 3) Run both with Docker Compose

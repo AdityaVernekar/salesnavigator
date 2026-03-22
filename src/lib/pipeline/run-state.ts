@@ -6,6 +6,7 @@ export type RunAgentType =
   | "lead_gen"
   | "people_gen"
   | "enrichment"
+  | "company_research"
   | "scoring"
   | "cold_email"
   | "worker";
@@ -15,6 +16,7 @@ export type PipelineStage =
   | "lead_generation"
   | "people_discovery"
   | "enrichment"
+  | "company_research"
   | "scoring"
   | "email"
   | "completed"

@@ -41,6 +41,7 @@ export function RunsList({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
 
   const campaignById = useMemo(() => new Map(campaigns.map((item) => [item.id, item.name])), [campaigns]);
   const statusValue = searchParams.get("status") ?? "all";
@@ -48,7 +49,7 @@ export function RunsList({
   const campaignValue = searchParams.get("campaignId") ?? "all";
 
   const statusOptions = ["running", "completed", "failed", "cancelled"];
-  const stageOptions = ["queued", "lead_generation", "people_discovery", "enrichment", "scoring", "email", "completed", "failed"];
+  const stageOptions = ["queued", "lead_generation", "people_discovery", "enrichment", "company_research", "scoring", "email", "completed", "failed"];
 
   const updateQuery = (patch: Record<string, string>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -73,6 +74,20 @@ export function RunsList({
       }, 1000);
     } catch {
       setCopiedKey(null);
+    }
+  };
+
+  const cancelRun = async (runId: string) => {
+    setCancellingRunId(runId);
+    try {
+      const res = await fetch(`/api/pipeline/runs/${runId}/cancel`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        router.refresh();
+      }
+    } finally {
+      setCancellingRunId(null);
     }
   };
 
@@ -152,6 +167,16 @@ export function RunsList({
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant={run.status === "failed" ? "destructive" : "outline"}>{run.status ?? "-"}</Badge>
+                    {run.status === "running" && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={cancellingRunId === run.id}
+                        onClick={() => cancelRun(run.id)}
+                      >
+                        {cancellingRunId === run.id ? "Cancelling…" : "Cancel"}
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => copyText(`run-${run.id}`, run.id)}>
                       {copiedKey === `run-${run.id}` ? "Copied" : "Copy run_id"}
                     </Button>

@@ -8,9 +8,54 @@ const authHeaders = {
   Authorization: `Bearer ${env.CLADO_API_KEY}`,
 };
 
+// ── Rate limiter (5 requests per minute) ───────────────────────────
+
+const RATE_LIMIT = 5;
+const RATE_WINDOW_MS = 60_000;
+const requestTimestamps: number[] = [];
+
+async function waitForRateLimit(): Promise<void> {
+  const now = Date.now();
+  // Remove timestamps older than the window
+  while (requestTimestamps.length > 0 && requestTimestamps[0] < now - RATE_WINDOW_MS) {
+    requestTimestamps.shift();
+  }
+  if (requestTimestamps.length >= RATE_LIMIT) {
+    const oldestInWindow = requestTimestamps[0];
+    const waitMs = oldestInWindow + RATE_WINDOW_MS - now + 500; // 500ms buffer
+    console.log(`[clado] Rate limit reached, waiting ${Math.ceil(waitMs / 1000)}s`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return waitForRateLimit(); // Re-check after waiting
+  }
+  requestTimestamps.push(Date.now());
+}
+
+// ── Fetch wrapper with rate limiting and 429 retry ─────────────────
+
+async function cladoFetch(
+  input: string | URL,
+  init?: RequestInit,
+  retries = 1,
+): Promise<Response> {
+  await waitForRateLimit();
+  const res = await fetch(input, init);
+
+  if (res.status === 429 && retries > 0) {
+    // Parse retry-after header or default to 15s
+    const retryAfter = res.headers.get("retry-after");
+    const waitSec = retryAfter ? Math.min(Number(retryAfter) || 15, 60) : 15;
+    console.log(`[clado] 429 rate limited, retrying in ${waitSec}s`);
+    await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
+    return cladoFetch(input, init, retries - 1);
+  }
+
+  return res;
+}
+
+// ── Response parser ────────────────────────────────────────────────
+
 async function readCladoResponse(res: Response) {
   const data = await res.json().catch(() => null);
-  console.log("data", data);
   if (!res.ok) {
     const detail =
       typeof data === "object" && data !== null && "detail" in data
@@ -20,6 +65,8 @@ async function readCladoResponse(res: Response) {
   }
   return data;
 }
+
+// ── Tools ──────────────────────────────────────────────────────────
 
 export const cladoSearchPeopleTool = createTool({
   id: "clado-search-people",
@@ -44,7 +91,7 @@ export const cladoSearchPeopleTool = createTool({
     if (inputData.search_id) url.searchParams.set("search_id", inputData.search_id);
     if (typeof inputData.offset === "number") url.searchParams.set("offset", String(inputData.offset));
 
-    const res = await fetch(url, { headers: authHeaders });
+    const res = await cladoFetch(url, { headers: authHeaders });
     const data = await readCladoResponse(res);
     return { data };
   },
@@ -62,7 +109,7 @@ export const cladoDeepResearchTool = createTool({
     data: z.any(),
   }),
   execute: async (inputData) => {
-    const start = await fetch(`${CLADO_BASE}/api/search/deep_research`, {
+    const start = await cladoFetch(`${CLADO_BASE}/api/search/deep_research`, {
       method: "POST",
       headers: {
         ...authHeaders,
@@ -78,7 +125,7 @@ export const cladoDeepResearchTool = createTool({
 
     for (let i = 0; i < 30; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10_000));
-      const statusRes = await fetch(`${CLADO_BASE}/api/search/deep_research/${jobId}`, {
+      const statusRes = await cladoFetch(`${CLADO_BASE}/api/search/deep_research/${jobId}`, {
         headers: authHeaders,
       });
       const status = await readCladoResponse(statusRes);
@@ -111,7 +158,7 @@ export const cladoEnrichContactTool = createTool({
     if (inputData.email_enrichment) url.searchParams.set("email_enrichment", "true");
     if (inputData.phone_enrichment) url.searchParams.set("phone_enrichment", "true");
 
-    const res = await fetch(url, { headers: authHeaders });
+    const res = await cladoFetch(url, { headers: authHeaders });
     const data = await readCladoResponse(res);
     return { data };
   },
@@ -129,7 +176,7 @@ export const cladoGetProfileTool = createTool({
   execute: async (inputData) => {
     const url = new URL(`${CLADO_BASE}/api/enrich/linkedin`);
     url.searchParams.set("linkedin_url", inputData.linkedin_url);
-    const res = await fetch(url, { headers: authHeaders });
+    const res = await cladoFetch(url, { headers: authHeaders });
     const data = await readCladoResponse(res);
     return { data };
   },
@@ -147,7 +194,7 @@ export const cladoScrapeLinkedinProfileTool = createTool({
   execute: async (inputData) => {
     const url = new URL(`${CLADO_BASE}/api/enrich/scrape`);
     url.searchParams.set("linkedin_url", inputData.linkedin_url);
-    const res = await fetch(url, { headers: authHeaders });
+    const res = await cladoFetch(url, { headers: authHeaders });
     const data = await readCladoResponse(res);
     return { data };
   },
@@ -169,7 +216,7 @@ export const cladoGetPostReactionsTool = createTool({
     url.searchParams.set("url", inputData.url);
     if (typeof inputData.page === "number") url.searchParams.set("page", String(inputData.page));
     if (inputData.reaction_type) url.searchParams.set("reaction_type", inputData.reaction_type);
-    const res = await fetch(url, { headers: authHeaders });
+    const res = await cladoFetch(url, { headers: authHeaders });
     const data = await readCladoResponse(res);
     return { data };
   },

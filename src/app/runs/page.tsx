@@ -17,7 +17,7 @@ async function getRunsPageData(searchParams: SearchParams) {
   let runsQuery = supabase
     .from("pipeline_runs")
     .select(
-      "id,campaign_id,status,current_stage,run_mode,start_stage,end_stage,leads_generated,leads_enriched,leads_scored,emails_sent,started_at",
+      "id,campaign_id,status,current_stage,run_mode,start_stage,end_stage,selected_stages,leads_generated,leads_enriched,leads_scored,emails_sent,started_at",
     )
     .eq("company_id", companyId)
     .order("started_at", { ascending: false })
@@ -48,7 +48,7 @@ async function getRunsPageData(searchParams: SearchParams) {
     const { data: runById } = await supabase
       .from("pipeline_runs")
       .select(
-        "id,campaign_id,status,current_stage,run_mode,start_stage,end_stage,leads_generated,leads_enriched,leads_scored,emails_sent,started_at",
+        "id,campaign_id,status,current_stage,run_mode,start_stage,end_stage,selected_stages,leads_generated,leads_enriched,leads_scored,emails_sent,started_at",
       )
       .eq("company_id", companyId)
       .eq("id", searchParams.runId)

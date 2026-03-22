@@ -1,5 +1,7 @@
 import { Agent } from "@mastra/core/agent";
+import { withSupermemory } from "@supermemory/tools/mastra";
 import { resolveAgentRuntimeConfig } from "@/lib/agents/runtime-config";
+import { env } from "@/lib/config/env";
 import type { ManagedAgentType, ResolvedRuntimeConfig, RuntimeGuardrails } from "@/lib/agents/runtime-types";
 import { agentToolAllowlist, resolveRuntimeTools } from "@/lib/agents/tool-registry";
 
@@ -46,6 +48,8 @@ export type RuntimeAgentResolution = {
 
 export type BuildRuntimeAgentOptions = {
   requestedToolKeys?: string[];
+  contactId?: string;
+  threadId?: string;
 };
 
 function buildGuardrailInstruction(guardrails: RuntimeGuardrails) {
@@ -103,14 +107,32 @@ export async function buildRuntimeAgent(
   const guardrailInstruction = buildGuardrailInstruction(resolvedConfig.guardrails);
   const instructions = `${resolvedConfig.instructions}${guardrailInstruction}`.trim();
 
-  const runtimeAgent = new Agent({
+  const useSupermemory =
+    (agentType === "followup" || agentType === "cold_email") &&
+    options?.contactId &&
+    env.SUPERMEMORY_API_KEY;
+
+  const baseConfig = {
     id: meta.id,
     name: meta.name,
     description: meta.description,
     model: resolvedConfig.model,
     tools: tools as Record<string, never>,
     instructions,
-  });
+  };
+
+  const agentConfig = useSupermemory
+    ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      withSupermemory(baseConfig as any, options.contactId!, {
+        apiKey: env.SUPERMEMORY_API_KEY,
+        mode: "full",
+        addMemory: "always",
+        threadId: options.threadId ?? options.contactId!,
+      })
+    : baseConfig;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const runtimeAgent = new Agent(agentConfig as any);
 
   return {
     agent: runtimeAgent,

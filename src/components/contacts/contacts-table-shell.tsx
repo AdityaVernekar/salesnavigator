@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ContactsTable, type ContactRow } from "@/components/contacts/contacts-table";
 import { RunPipelineFromContactsDialog } from "@/components/contacts/run-pipeline-from-contacts-dialog";
+import type { ExecutablePipelineStage } from "@/lib/pipeline/stages";
 
 export function ContactsTableShell({ rows }: { rows: ContactRow[] }) {
   const router = useRouter();
@@ -15,18 +16,8 @@ export function ContactsTableShell({ rows }: { rows: ContactRow[] }) {
   const [error, setError] = useState<string | null>(null);
 
   const runPipelineOnSelection = async (
-    startStage:
-      | "lead_generation"
-      | "people_discovery"
-      | "enrichment"
-      | "scoring"
-      | "email",
-    endStage:
-      | "lead_generation"
-      | "people_discovery"
-      | "enrichment"
-      | "scoring"
-      | "email",
+    startStage: ExecutablePipelineStage,
+    endStage: ExecutablePipelineStage,
   ) => {
     const contactIds = Array.from(selectedIds);
     if (!contactIds.length) return;

@@ -2,6 +2,7 @@ export const EXECUTABLE_PIPELINE_STAGES = [
   "lead_generation",
   "people_discovery",
   "enrichment",
+  "company_research",
   "scoring",
   "email",
 ] as const;

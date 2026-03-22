@@ -9,6 +9,8 @@ export const pipelineRunConfigSchema = z
     leadIds: z.array(z.string().uuid()).max(500).optional(),
     /** When set, contact-based stages only process these selected contacts. */
     contactIds: z.array(z.string().uuid()).max(2000).optional(),
+    /** Data source for lead/people discovery and enrichment. */
+    source: z.enum(["auto", "clado", "exa_websets"]).optional(),
     leadGeneration: z
       .object({
         maxLeads: boundedInt(1, 500),
@@ -45,6 +47,7 @@ const stageToConfigKey: Record<ExecutablePipelineStage, keyof PipelineRunConfig>
   lead_generation: "leadGeneration",
   people_discovery: "peopleDiscovery",
   enrichment: "enrichment",
+  company_research: "enrichment",
   scoring: "scoring",
   email: "email",
 };
@@ -62,6 +65,9 @@ export function normalizeRunConfig(
   }
   if (parsed.contactIds?.length) {
     normalized.contactIds = parsed.contactIds;
+  }
+  if (parsed.source) {
+    normalized.source = parsed.source;
   }
   for (const stage of EXECUTABLE_PIPELINE_STAGES) {
     if (!selected.has(stage)) continue;
