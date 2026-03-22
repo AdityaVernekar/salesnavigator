@@ -89,7 +89,7 @@ export default async function CampaignDetailPage({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h1 className="text-2xl font-semibold">{campaign.name}</h1>
+        <h1 className="text-xl font-semibold">{campaign.name}</h1>
         <RunPipelineButton
           campaignId={campaign.id}
           defaultLeadTarget={campaign.leads_per_run ?? 20}

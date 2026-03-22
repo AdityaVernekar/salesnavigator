@@ -146,7 +146,7 @@ export default async function OpsPage({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Ops Dashboard</h1>
+          <h1 className="text-xl font-semibold">Ops Dashboard</h1>
           <p className="text-sm text-muted-foreground">Queue depth, pipeline run history, and cron health.</p>
         </div>
         <Link href="/settings" className="text-sm text-primary underline">

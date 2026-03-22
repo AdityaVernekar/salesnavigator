@@ -75,7 +75,7 @@ export default async function SettingsPage({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Settings</h1>
+          <h1 className="text-xl font-semibold">Settings</h1>
           <p className="text-sm text-muted-foreground">
             Manage mailboxes, agent configs, and workspace settings.
           </p>

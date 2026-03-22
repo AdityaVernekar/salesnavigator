@@ -152,7 +152,7 @@ export default async function LeadDetailPage({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">
+      <h1 className="text-xl font-semibold">
         {lead?.company_name ?? contactById?.company_name ?? "Lead Detail"}
       </h1>
 
@@ -176,7 +176,7 @@ export default async function LeadDetailPage({
       </Card>
 
       <div className="space-y-3">
-        <h2 className="text-lg font-medium">Contacts</h2>
+        <h2 className="text-base font-medium">Contacts</h2>
         {(contacts ?? []).length === 0 ? (
           <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
             No contacts found for this lead yet.

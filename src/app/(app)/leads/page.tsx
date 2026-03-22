@@ -273,7 +273,7 @@ export default async function LeadsPage({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Leads</h1>
+          <h1 className="text-xl font-semibold">Leads</h1>
           <p className="text-sm text-muted-foreground">
             All discovered leads, including qualification signals when available.
           </p>

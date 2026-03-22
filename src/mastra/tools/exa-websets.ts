@@ -8,6 +8,30 @@ const exa = new Exa(env.EXA_API_KEY);
 const MAX_POLL_ITERATIONS = 30;
 const POLL_INTERVAL_MS = 10_000;
 
+// ---------------------------------------------------------------------------
+// Dedup cache — prevents creating duplicate websets for the same query
+// ---------------------------------------------------------------------------
+const DEDUP_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const websetCache = new Map<string, { websetId: string; createdAt: number }>();
+
+function websetCacheKey(query: string, entity: string, count: number): string {
+  return `${entity}:${count}:${query.trim().toLowerCase()}`;
+}
+
+function getCachedWebsetId(key: string): string | null {
+  const entry = websetCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > DEDUP_TTL_MS) {
+    websetCache.delete(key);
+    return null;
+  }
+  return entry.websetId;
+}
+
+function setCachedWebsetId(key: string, websetId: string): void {
+  websetCache.set(key, { websetId, createdAt: Date.now() });
+}
+
 async function pollWebsetUntilDone(websetId: string) {
   for (let i = 0; i < MAX_POLL_ITERATIONS; i++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -54,6 +78,20 @@ export const exaWebsetCreateTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
+    const cacheKey = websetCacheKey(inputData.query, inputData.entity, inputData.count);
+    const cachedId = getCachedWebsetId(cacheKey);
+
+    if (cachedId) {
+      const existing = await exa.websets.get(cachedId);
+      if (existing.status !== "running") {
+        const items = await fetchWebsetItems(cachedId);
+        return { websetId: cachedId, status: existing.status, itemCount: items.length, items };
+      }
+      const completed = await pollWebsetUntilDone(cachedId);
+      const items = await fetchWebsetItems(cachedId);
+      return { websetId: cachedId, status: completed.status, itemCount: items.length, items };
+    }
+
     const searchCriteria = inputData.criteria?.map((description) => ({
       description,
     }));
@@ -70,6 +108,7 @@ export const exaWebsetCreateTool = createTool({
         : {}),
     });
 
+    setCachedWebsetId(cacheKey, webset.id);
     const completed = await pollWebsetUntilDone(webset.id);
     const items = await fetchWebsetItems(webset.id);
 
@@ -114,6 +153,20 @@ export const exaWebsetSearchPeopleTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
+    const cacheKey = websetCacheKey(inputData.query, "person", inputData.count);
+    const cachedId = getCachedWebsetId(cacheKey);
+
+    if (cachedId) {
+      const existing = await exa.websets.get(cachedId);
+      if (existing.status !== "running") {
+        const items = await fetchWebsetItems(cachedId);
+        return { websetId: cachedId, status: existing.status, itemCount: items.length, items };
+      }
+      const completed = await pollWebsetUntilDone(cachedId);
+      const items = await fetchWebsetItems(cachedId);
+      return { websetId: cachedId, status: completed.status, itemCount: items.length, items };
+    }
+
     const enrichments: CreateEnrichmentParameters[] = [
       {
         description: "Find the work email address for this person",
@@ -130,6 +183,7 @@ export const exaWebsetSearchPeopleTool = createTool({
       enrichments,
     });
 
+    setCachedWebsetId(cacheKey, webset.id);
     const completed = await pollWebsetUntilDone(webset.id);
     const items = await fetchWebsetItems(webset.id);
 
@@ -270,6 +324,20 @@ export const exaWebsetSearchCompaniesTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
+    const cacheKey = websetCacheKey(inputData.query, "company", inputData.count);
+    const cachedId = getCachedWebsetId(cacheKey);
+
+    if (cachedId) {
+      const existing = await exa.websets.get(cachedId);
+      if (existing.status !== "running") {
+        const items = await fetchWebsetItems(cachedId);
+        return { websetId: cachedId, status: existing.status, itemCount: items.length, items };
+      }
+      const completed = await pollWebsetUntilDone(cachedId);
+      const items = await fetchWebsetItems(cachedId);
+      return { websetId: cachedId, status: completed.status, itemCount: items.length, items };
+    }
+
     const searchCriteria = inputData.criteria?.map((description) => ({
       description,
     }));
@@ -283,6 +351,7 @@ export const exaWebsetSearchCompaniesTool = createTool({
       },
     });
 
+    setCachedWebsetId(cacheKey, webset.id);
     const completed = await pollWebsetUntilDone(webset.id);
     const items = await fetchWebsetItems(webset.id);
 

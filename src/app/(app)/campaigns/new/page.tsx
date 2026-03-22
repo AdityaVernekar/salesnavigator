@@ -189,7 +189,7 @@ export default async function NewCampaignPage({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Create Campaign</h1>
+      <h1 className="text-xl font-semibold">Create Campaign</h1>
       <form action={createCampaign} className="space-y-6">
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="name">

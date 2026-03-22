@@ -81,7 +81,7 @@ export default async function EnrollmentsPage({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Enrollments</h1>
+      <h1 className="text-xl font-semibold">Enrollments</h1>
       <p className="text-sm text-muted-foreground">
         Track and manage email sequence enrollments across campaigns.
       </p>

@@ -93,9 +93,9 @@ export default async function RunsPage({
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold">Runs</h1>
+        <h1 className="text-xl font-semibold">Runs</h1>
         <p className="text-sm text-muted-foreground">Live observability for pipeline runs and agent activity.</p>
       </div>
 

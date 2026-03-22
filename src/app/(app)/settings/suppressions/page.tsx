@@ -22,7 +22,7 @@ export default async function SuppressionsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Suppression List</h1>
+      <h1 className="text-xl font-semibold">Suppression List</h1>
       <form action={addSuppression} className="flex flex-wrap gap-2">
         <Input name="email" type="email" placeholder="email@company.com" className="max-w-xs" />
         <Input name="reason" placeholder="Reason" className="max-w-xs" />

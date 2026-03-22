@@ -150,8 +150,8 @@ export default function ExaWebsetsTestPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-8">
-      <h1 className="text-2xl font-bold">Exa Websets Test</h1>
+    <div className="mx-auto max-w-4xl space-y-4 p-8">
+      <h1 className="text-xl font-semibold">Exa Websets Test</h1>
 
       <div className="space-y-4 rounded-lg border p-4">
         <div className="space-y-2">
@@ -219,7 +219,7 @@ export default function ExaWebsetsTestPage() {
       {result?.ok && result.items && result.items.length > 0 && (
         <div className="space-y-4 rounded-lg border p-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">
+            <h2 className="text-base font-semibold">
               Results ({result.items.length} items, {selectedItems.size} selected)
             </h2>
             <Button variant="outline" size="sm" onClick={toggleAll}>

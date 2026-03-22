@@ -6,18 +6,23 @@ interface StatCardsProps {
   emails: number;
   campaigns: number;
   activeRuns: number;
+  enrichedContacts: number;
+  activeEnrollments: number;
+  availableForOutreach: number;
 }
 
-export function StatCards({ leads, emails, campaigns, activeRuns }: StatCardsProps) {
+export function StatCards({ leads, emails, campaigns, activeRuns, enrichedContacts, activeEnrollments, availableForOutreach }: StatCardsProps) {
   const items = [
-    { label: "Leads", value: leads, href: "/leads" },
+    { label: "Total Leads", value: leads, href: "/leads" },
+    { label: "Enriched Contacts", value: enrichedContacts },
     { label: "Emails Sent", value: emails },
-    { label: "Campaigns", value: campaigns, href: "/campaigns" },
-    { label: "Active Runs", value: activeRuns },
+    { label: "In Active Campaigns", value: activeEnrollments, href: "/enrollments" },
+    { label: "Available for Outreach", value: availableForOutreach },
+    { label: "Active Runs", value: activeRuns, href: "/runs" },
   ];
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
       {items.map((item) => {
         const content = (
           <>

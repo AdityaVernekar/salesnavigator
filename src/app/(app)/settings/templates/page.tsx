@@ -22,7 +22,7 @@ export default async function TemplatesSettingsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold">Template Repository</h1>
+        <h1 className="text-xl font-semibold">Template Repository</h1>
         <p className="text-sm text-muted-foreground">
           Build global cold-email templates using natural language, then launch A/B experiments per campaign.
         </p>

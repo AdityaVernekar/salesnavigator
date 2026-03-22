@@ -13,7 +13,7 @@ export default async function AgentTypeConfigPage({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Agent Config: {normalizedType}</h1>
+      <h1 className="text-xl font-semibold">Agent Config: {normalizedType}</h1>
       <AgentConfigForm type={normalizedType} />
     </div>
   );

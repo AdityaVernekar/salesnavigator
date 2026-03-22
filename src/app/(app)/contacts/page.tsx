@@ -1,12 +1,19 @@
 import Link from "next/link";
+import { ContactsFilterForm } from "@/components/contacts/contacts-filter-form";
 import { ContactsTableShell } from "@/components/contacts/contacts-table-shell";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { requireCurrentUserCompany } from "@/lib/auth/user-company";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 25;
+
+interface ContactsFilters {
+  q: string;
+  status: string;
+  tier: string;
+  source: string;
+  campaignId: string;
+}
 
 interface ContactsPageData {
   rows: Array<{
@@ -26,33 +33,98 @@ interface ContactsPageData {
   currentPage: number;
   from: number;
   to: number;
+  campaignOptions: Array<{ id: string; name: string }>;
 }
 
-function buildContactsHref(page: number, q: string) {
+function buildContactsHref(page: number, filters: ContactsFilters) {
   const params = new URLSearchParams();
   params.set("page", String(page));
-  if (q.trim()) params.set("q", q.trim());
+  if (filters.q) params.set("q", filters.q);
+  if (filters.status !== "all") params.set("status", filters.status);
+  if (filters.tier !== "all") params.set("tier", filters.tier);
+  if (filters.source !== "all") params.set("source", filters.source);
+  if (filters.campaignId !== "all") params.set("campaignId", filters.campaignId);
   return `/contacts?${params.toString()}`;
 }
 
-async function getContactRows(requestedPage: number, q: string): Promise<ContactsPageData> {
+async function getContactRows(
+  requestedPage: number,
+  filters: ContactsFilters,
+): Promise<ContactsPageData> {
   const { supabase, companyId } = await requireCurrentUserCompany();
-  const firstFrom = (requestedPage - 1) * PAGE_SIZE;
-  const firstTo = firstFrom + PAGE_SIZE - 1;
 
+  // Fetch campaigns for filter dropdown
+  const { data: campaignRows } = await supabase
+    .from("campaigns")
+    .select("id,name")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+  const campaignOptions = (campaignRows ?? []).map((c) => ({ id: c.id, name: c.name }));
+
+  // Build contacts query
   let query = supabase
     .from("contacts")
-    .select("id,lead_id,name,email,linkedin_url,company_name,created_at", { count: "exact" })
+    .select("id,lead_id,campaign_id,name,email,linkedin_url,company_name,created_at", { count: "exact" })
     .eq("company_id", companyId)
     .order("created_at", { ascending: false })
-    .or("email.not.is.null,linkedin_url.not.is.null")
-    .range(firstFrom, firstTo);
+    .or("email.not.is.null,linkedin_url.not.is.null");
 
-  if (q) {
+  if (filters.q) {
     query = query.or(
-      `name.ilike.%${q}%,company_name.ilike.%${q}%,email.ilike.%${q}%,linkedin_url.ilike.%${q}%`,
+      `name.ilike.%${filters.q}%,company_name.ilike.%${filters.q}%,email.ilike.%${filters.q}%,linkedin_url.ilike.%${filters.q}%`,
     );
   }
+
+  if (filters.campaignId !== "all") {
+    query = query.eq("campaign_id", filters.campaignId);
+  }
+
+  // For status/tier/source filters, we need to filter via joined tables.
+  // Pre-fetch the IDs to filter by if these filters are active.
+  let allowedLeadIds: Set<string> | null = null;
+  let allowedContactIdsByTier: Set<string> | null = null;
+
+  if (filters.status !== "all" || filters.source !== "all") {
+    let leadQuery = supabase
+      .from("leads")
+      .select("id")
+      .eq("company_id", companyId);
+    if (filters.status !== "all") leadQuery = leadQuery.eq("status", filters.status);
+    if (filters.source !== "all") leadQuery = leadQuery.eq("source", filters.source);
+    const { data: filteredLeads } = await leadQuery;
+    allowedLeadIds = new Set((filteredLeads ?? []).map((l) => l.id));
+  }
+
+  if (filters.tier !== "all") {
+    const { data: filteredScores } = await supabase
+      .from("icp_scores")
+      .select("contact_id")
+      .eq("company_id", companyId)
+      .eq("tier", filters.tier);
+    allowedContactIdsByTier = new Set((filteredScores ?? []).map((s) => s.contact_id));
+  }
+
+  // If status/source filter returned zero leads, short-circuit
+  if (allowedLeadIds !== null && allowedLeadIds.size === 0) {
+    return { rows: [], totalCount: 0, totalPages: 1, currentPage: 1, from: 0, to: 0, campaignOptions };
+  }
+  if (allowedContactIdsByTier !== null && allowedContactIdsByTier.size === 0) {
+    return { rows: [], totalCount: 0, totalPages: 1, currentPage: 1, from: 0, to: 0, campaignOptions };
+  }
+
+  // Apply lead_id filter if status/source active
+  if (allowedLeadIds !== null) {
+    query = query.in("lead_id", Array.from(allowedLeadIds));
+  }
+
+  // Apply contact_id filter if tier active
+  if (allowedContactIdsByTier !== null) {
+    query = query.in("id", Array.from(allowedContactIdsByTier));
+  }
+
+  const firstFrom = (requestedPage - 1) * PAGE_SIZE;
+  const firstTo = firstFrom + PAGE_SIZE - 1;
+  query = query.range(firstFrom, firstTo);
 
   const { data: firstContacts, count } = await query;
 
@@ -60,21 +132,36 @@ async function getContactRows(requestedPage: number, q: string): Promise<Contact
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const currentPage = Math.min(requestedPage, totalPages);
 
-  const contacts =
-    currentPage === requestedPage
-      ? (firstContacts ?? [])
-      : ((
-          await supabase
-            .from("contacts")
-            .select("id,lead_id,name,email,linkedin_url,company_name,created_at")
-            .eq("company_id", companyId)
-            .order("created_at", { ascending: false })
-            .or("email.not.is.null,linkedin_url.not.is.null")
-            .range(
-              (currentPage - 1) * PAGE_SIZE,
-              (currentPage - 1) * PAGE_SIZE + PAGE_SIZE - 1,
-            )
-        ).data ?? []);
+  let contacts = firstContacts ?? [];
+
+  // If page was clamped, re-fetch the correct page
+  if (currentPage !== requestedPage && totalCount > 0) {
+    let refetchQuery = supabase
+      .from("contacts")
+      .select("id,lead_id,campaign_id,name,email,linkedin_url,company_name,created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .or("email.not.is.null,linkedin_url.not.is.null")
+      .range(
+        (currentPage - 1) * PAGE_SIZE,
+        (currentPage - 1) * PAGE_SIZE + PAGE_SIZE - 1,
+      );
+    if (filters.q) {
+      refetchQuery = refetchQuery.or(
+        `name.ilike.%${filters.q}%,company_name.ilike.%${filters.q}%,email.ilike.%${filters.q}%,linkedin_url.ilike.%${filters.q}%`,
+      );
+    }
+    if (filters.campaignId !== "all") {
+      refetchQuery = refetchQuery.eq("campaign_id", filters.campaignId);
+    }
+    if (allowedLeadIds !== null) {
+      refetchQuery = refetchQuery.in("lead_id", Array.from(allowedLeadIds));
+    }
+    if (allowedContactIdsByTier !== null) {
+      refetchQuery = refetchQuery.in("id", Array.from(allowedContactIdsByTier));
+    }
+    contacts = (await refetchQuery).data ?? [];
+  }
 
   const eligibleContacts = contacts.filter((contact) => {
     const hasEmail = Boolean(contact.email?.trim());
@@ -83,17 +170,11 @@ async function getContactRows(requestedPage: number, q: string): Promise<Contact
   });
 
   if (!eligibleContacts.length) {
-    return {
-      rows: [],
-      totalCount,
-      totalPages,
-      currentPage,
-      from: 0,
-      to: 0,
-    };
+    return { rows: [], totalCount, totalPages, currentPage, from: 0, to: 0, campaignOptions };
   }
 
-  const leadIds = Array.from(new Set(eligibleContacts.map((contact) => contact.lead_id).filter(Boolean)));
+  // Fetch related leads and scores
+  const leadIds = Array.from(new Set(eligibleContacts.map((c) => c.lead_id).filter(Boolean)));
   const { data: leads } = leadIds.length
     ? await supabase
         .from("leads")
@@ -103,7 +184,7 @@ async function getContactRows(requestedPage: number, q: string): Promise<Contact
     : { data: [] };
   const leadById = new Map((leads ?? []).map((lead) => [lead.id, lead]));
 
-  const contactIds = eligibleContacts.map((contact) => contact.id);
+  const contactIds = eligibleContacts.map((c) => c.id);
   const { data: scores } = contactIds.length
     ? await supabase
         .from("icp_scores")
@@ -142,76 +223,70 @@ async function getContactRows(requestedPage: number, q: string): Promise<Contact
   const from = (currentPage - 1) * PAGE_SIZE + 1;
   const to = Math.min(currentPage * PAGE_SIZE, totalCount);
 
-  return {
-    rows,
-    totalCount,
-    totalPages,
-    currentPage,
-    from,
-    to,
-  };
+  return { rows, totalCount, totalPages, currentPage, from, to, campaignOptions };
 }
 
 export default async function ContactsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; q?: string }>;
+  searchParams: Promise<{ page?: string; q?: string; status?: string; tier?: string; source?: string; campaignId?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const pageValue = Number.parseInt(resolvedSearchParams.page ?? "1", 10);
   const requestedPage = Number.isFinite(pageValue) ? Math.max(1, pageValue) : 1;
-  const q = (resolvedSearchParams.q ?? "").trim();
 
-  const { rows, totalCount, totalPages, currentPage, from, to } =
-    await getContactRows(requestedPage, q);
+  const filters: ContactsFilters = {
+    q: (resolvedSearchParams.q ?? "").trim(),
+    status: resolvedSearchParams.status ?? "all",
+    tier: resolvedSearchParams.tier ?? "all",
+    source: resolvedSearchParams.source ?? "all",
+    campaignId: resolvedSearchParams.campaignId ?? "all",
+  };
 
-  const previousPageHref = buildContactsHref(Math.max(1, currentPage - 1), q);
-  const nextPageHref = buildContactsHref(Math.min(totalPages, currentPage + 1), q);
+  const { rows, totalCount, totalPages, currentPage, from, to, campaignOptions } =
+    await getContactRows(requestedPage, filters);
+
+  const hasActiveFilters =
+    filters.q !== "" || filters.status !== "all" || filters.tier !== "all" || filters.source !== "all" || filters.campaignId !== "all";
+
+  const previousPageHref = buildContactsHref(Math.max(1, currentPage - 1), filters);
+  const nextPageHref = buildContactsHref(Math.min(totalPages, currentPage + 1), filters);
   const hasPreviousPage = currentPage > 1;
   const hasNextPage = currentPage < totalPages;
 
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold">Contacts</h1>
+        <h1 className="text-xl font-semibold">Contacts</h1>
         <p className="text-sm text-muted-foreground">
           Select contacts with email or LinkedIn and run the pipeline on just those records.
         </p>
       </div>
 
-      <form action="/contacts" method="get" className="flex items-end gap-2">
-        <div className="flex w-full max-w-md flex-col gap-1">
-          <label htmlFor="contacts-q" className="text-sm text-muted-foreground">
-            Search
-          </label>
-          <Input
-            id="contacts-q"
-            name="q"
-            defaultValue={q}
-            placeholder="Name, company, email, or LinkedIn"
-          />
-        </div>
-        <Button type="submit" variant="outline">
-          Apply
-        </Button>
-        {q ? (
-          <Button asChild variant="ghost">
-            <Link href="/contacts">Clear</Link>
-          </Button>
-        ) : null}
-      </form>
+      <ContactsFilterForm
+        q={filters.q}
+        status={filters.status}
+        tier={filters.tier}
+        source={filters.source}
+        campaignId={filters.campaignId}
+        campaignOptions={campaignOptions}
+      />
 
       {rows.length === 0 ? (
         <div className="rounded border border-dashed p-6">
           <p className="text-sm font-medium">
-            {q ? "No contacts match this search." : "No contacts with email or LinkedIn yet."}
+            {hasActiveFilters ? "No contacts match the current filters." : "No contacts with email or LinkedIn yet."}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Run discovery/enrichment first, then come back here to select contacts for pipeline runs.
+            {hasActiveFilters
+              ? "Try adjusting or clearing your filters."
+              : "Run discovery/enrichment first, then come back here to select contacts for pipeline runs."}
           </p>
-          <Link href="/leads" className="mt-3 inline-block text-sm text-primary underline">
-            Go to leads
-          </Link>
+          {!hasActiveFilters && (
+            <Link href="/leads" className="mt-3 inline-block text-sm text-primary underline">
+              Go to leads
+            </Link>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
