@@ -6,9 +6,11 @@ import { CampaignMailboxAssignment } from "@/components/campaigns/campaign-mailb
 import { CampaignTestSettings } from "@/components/campaigns/campaign-test-settings";
 import { LeadTargetEditor } from "@/components/campaigns/lead-target-editor";
 import { RunPipelineButton } from "@/components/campaigns/run-pipeline-button";
+import { WorkflowBuilder } from "@/components/campaigns/workflow-builder";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { requireCurrentUserCompany } from "@/lib/auth/user-company";
+import type { SequenceStep } from "@/lib/workflows/sequence-schema";
 
 export const dynamic = "force-dynamic";
 
@@ -169,6 +171,25 @@ export default async function CampaignDetailPage({
 
       <Card>
         <CardHeader>
+          <CardTitle>Email Workflow</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <WorkflowBuilder
+            templates={[]}
+            defaultSteps={(campaign.sequence_steps ?? []) as SequenceStep[]}
+            defaultSendWindow={{
+              sendWindowStart: campaign.send_window_start ?? "09:00",
+              sendWindowEnd: campaign.send_window_end ?? "17:00",
+              sendWindowTimezone: campaign.send_window_timezone ?? "America/New_York",
+              sendWindowDays: campaign.send_window_days ?? [1, 2, 3, 4, 5],
+            }}
+            readOnly
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Enrollments</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
@@ -190,6 +211,11 @@ export default async function CampaignDetailPage({
                 </div>
                 <div>
                   Step {item.current_step} • {item.status}
+                  {item.scheduled_send_at && item.status === "active" && (
+                    <span className="ml-2 text-muted-foreground">
+                      Next: {new Date(item.scheduled_send_at).toLocaleString()}
+                    </span>
+                  )}
                 </div>
               </div>
             );

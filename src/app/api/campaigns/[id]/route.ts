@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { leadTargetSchema } from "@/lib/campaigns/validation";
 import { requireRouteContext } from "@/lib/auth/route-context";
+import { sequenceStepSchema } from "@/lib/workflows/sequence-schema";
 
 const campaignPatchSchema = z.object({
   leads_per_run: leadTargetSchema.optional(),
@@ -10,6 +11,11 @@ const campaignPatchSchema = z.object({
   template_experiment_id: z.string().uuid().nullable().optional(),
   test_mode_enabled: z.boolean().optional(),
   test_recipient_emails: z.array(z.string().email()).max(50).optional(),
+  sequence_steps: z.array(sequenceStepSchema).min(1).optional(),
+  send_window_start: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  send_window_end: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  send_window_timezone: z.string().optional(),
+  send_window_days: z.array(z.number().int().min(1).max(7)).min(1).optional(),
 });
 
 export async function GET(
