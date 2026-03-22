@@ -5,8 +5,7 @@ import { IcpForm } from "@/components/campaigns/icp-form";
 import { MailboxMultiSelect } from "@/components/campaigns/mailbox-multi-select";
 import { ScoringForm } from "@/components/campaigns/scoring-form";
 import { SequenceBuilder } from "@/components/campaigns/sequence-builder";
-import { SequenceStepEditor } from "@/components/campaigns/sequence-step-editor";
-import { SendWindowConfig } from "@/components/campaigns/send-window-config";
+import { WorkflowBuilder } from "@/components/campaigns/workflow-builder";
 import { leadTargetSchema } from "@/lib/campaigns/validation";
 import { sequenceStepsArraySchema } from "@/lib/workflows/sequence-schema";
 import { env } from "@/lib/config/env";
@@ -218,13 +217,12 @@ export default async function NewCampaignPage({
             templateExperimentId: defaults.templateExperimentId,
           }}
         />
-        <SequenceStepEditor
+        <WorkflowBuilder
           templates={(emailTemplates ?? []).map((t) => ({
             id: t.id as string,
             name: t.name as string,
           }))}
         />
-        <SendWindowConfig />
         <div className="space-y-2">
           <p className="text-sm font-medium">Assigned Mailboxes</p>
           <p className="text-xs text-muted-foreground">

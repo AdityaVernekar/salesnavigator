@@ -35,13 +35,23 @@ function emptyStep(stepNumber: number, delayDays: number): SequenceStep {
 export function SequenceStepEditor({
   templates,
   defaultSteps,
+  onStepsChange,
 }: {
   templates: TemplateOption[];
   defaultSteps?: SequenceStep[];
+  onStepsChange?: (steps: SequenceStep[]) => void;
 }) {
-  const [steps, setSteps] = useState<SequenceStep[]>(
+  const [steps, setStepsInternal] = useState<SequenceStep[]>(
     defaultSteps?.length ? defaultSteps : [emptyStep(0, 0)],
   );
+
+  function setSteps(updater: SequenceStep[] | ((prev: SequenceStep[]) => SequenceStep[])) {
+    setStepsInternal((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      onStepsChange?.(next);
+      return next;
+    });
+  }
 
   function updateStep(index: number, updates: Partial<SequenceStep>) {
     setSteps((prev) =>
