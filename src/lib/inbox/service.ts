@@ -336,7 +336,7 @@ export async function syncInboxReplies(options?: { campaignId?: string; maxAccou
 
   const { data: accountRows, error: accountError } = await supabaseServer
     .from("email_accounts")
-    .select("id,gmail_address")
+    .select("id,gmail_address,provider")
     .eq("is_active", true)
     .eq("connection_status", "connected")
     .limit(maxAccounts);
@@ -347,7 +347,9 @@ export async function syncInboxReplies(options?: { campaignId?: string; maxAccou
     allowedCampaignId = options.campaignId;
   }
 
-  const connectedAccounts = (accountRows ?? []) as Array<{ id: string; gmail_address: string | null }>;
+  // Only poll Gmail/Composio accounts — AgentMail accounts use webhooks for reply detection
+  const allAccounts = (accountRows ?? []) as Array<{ id: string; gmail_address: string | null; provider?: string | null }>;
+  const connectedAccounts = allAccounts.filter((a) => (a.provider ?? "gmail_composio") !== "agentmail");
   if (!connectedAccounts.length) {
     return {
       ok: true,
