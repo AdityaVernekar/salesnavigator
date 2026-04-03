@@ -9,11 +9,14 @@ export function getRedisClient(): Redis {
     throw new Error("Redis host/port env is missing");
   }
 
+  const tlsEnabled = env.REDIS_TLS_ENABLED.toLowerCase() === "true";
+
   client = new Redis({
     host: env.REDIS_HOST,
     port: Number(env.REDIS_PORT),
     password: env.REDIS_PASSWORD || undefined,
-    tls: env.REDIS_TLS_ENABLED.toLowerCase() === "true" ? {} : undefined,
+    family: 4,
+    tls: tlsEnabled ? { rejectUnauthorized: false } : undefined,
   });
 
   return client;
