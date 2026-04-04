@@ -1,20 +1,28 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-function getSupabaseUrl() {
-  const value = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  if (!value) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
-  return value;
+let _client: SupabaseClient | null = null;
+
+export function getSupabaseAdmin(): SupabaseClient {
+  if (_client) return _client;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!key) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+
+  _client = createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+  return _client;
 }
 
-function getServiceRoleKey() {
-  const value = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  if (!value) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
-  return value;
-}
-
-export const supabaseAdmin = createClient(getSupabaseUrl(), getServiceRoleKey(), {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
+// Backward-compatible lazy getter
+export const supabaseAdmin = new Proxy({} as SupabaseClient, {
+  get(_target, prop) {
+    return (getSupabaseAdmin() as Record<string | symbol, unknown>)[prop];
   },
 });
