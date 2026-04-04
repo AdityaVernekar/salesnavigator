@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const signupSchema = z.object({
   email: z.string().email(),
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
 
   const normalizedEmail = parsed.data.email.trim().toLowerCase();
 
-  const { data: waitlistEntry, error: waitlistError } = await supabaseAdmin
+  const { data: waitlistEntry, error: waitlistError } = await getSupabaseAdmin()
     .from("waitlist")
     .select("is_allowed")
     .eq("email", normalizedEmail)
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data, error } = await supabaseAdmin.auth.admin.createUser({
+  const { data, error } = await getSupabaseAdmin().auth.admin.createUser({
     email: normalizedEmail,
     password: parsed.data.password,
     email_confirm: true,

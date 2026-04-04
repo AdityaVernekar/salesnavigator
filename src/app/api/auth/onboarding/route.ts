@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerAuthClient } from "@/lib/supabase/server-auth";
 import { getMembershipForUser } from "@/lib/auth/membership";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const createCompanySchema = z.object({
   action: z.literal("create_company"),
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (parsed.data.action === "join_company") {
-    const { data: company, error: companyError } = await supabaseAdmin
+    const { data: company, error: companyError } = await getSupabaseAdmin()
       .from("companies")
       .select("id")
       .eq("id", parsed.data.companyId)
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Company not found for provided company ID" }, { status: 404 });
     }
 
-    const { error: joinError } = await supabaseAdmin.from("company_users").upsert(
+    const { error: joinError } = await getSupabaseAdmin().from("company_users").upsert(
       {
         company_id: company.id,
         user_id: user.id,
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const slug = withSuffix(baseSlug, attempt);
-    const { data: company, error: createError } = await supabaseAdmin
+    const { data: company, error: createError } = await getSupabaseAdmin()
       .from("companies")
       .insert({
         name: parsed.data.companyName,
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: lastError ?? "Failed to create company" }, { status: 400 });
   }
 
-  const { error: membershipError } = await supabaseAdmin.from("company_users").insert({
+  const { error: membershipError } = await getSupabaseAdmin().from("company_users").insert({
     company_id: companyId,
     user_id: user.id,
     role: "owner",

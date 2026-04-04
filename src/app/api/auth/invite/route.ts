@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireRouteContext } from "@/lib/auth/route-context";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   }
 
   const redirectTo = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/auth/callback?next=/auth/set-password`;
-  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(parsed.data.email, {
+  const { data, error } = await getSupabaseAdmin().auth.admin.inviteUserByEmail(parsed.data.email, {
     redirectTo,
     data: {
       company_id: companyId,
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (data.user?.id) {
-    await supabaseAdmin.from("company_users").upsert(
+    await getSupabaseAdmin().from("company_users").upsert(
       {
         company_id: companyId,
         user_id: data.user.id,
