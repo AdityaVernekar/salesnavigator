@@ -1,12 +1,17 @@
 import { Composio } from "@composio/core";
 import { env } from "@/lib/config/env";
 
-const composio = new Composio({
-  apiKey: env.COMPOSIO_API_KEY,
-});
+let _composio: Composio | null = null;
+
+function getComposio(): Composio {
+  if (!_composio) {
+    _composio = new Composio({ apiKey: env.COMPOSIO_API_KEY });
+  }
+  return _composio;
+}
 
 export async function createComposioSession(userId: string) {
-  return composio.create(userId);
+  return getComposio().create(userId);
 }
 
 export async function getGmailToolkit(userId: string) {
@@ -30,7 +35,7 @@ export async function executeComposioTool(
   args: Record<string, unknown>,
   connectedAccountId?: string,
 ) {
-  return composio.tools.execute(toolSlug, {
+  return getComposio().tools.execute(toolSlug, {
     userId,
     arguments: args,
     ...(connectedAccountId ? { connectedAccountId } : {}),
