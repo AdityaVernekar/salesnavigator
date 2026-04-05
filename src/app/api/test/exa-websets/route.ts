@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import Exa from "exa-js";
+import type Exa from "exa-js";
 import { env } from "@/lib/config/env";
 import { supabaseServer } from "@/lib/supabase/server";
 
-const exa = new Exa(env.EXA_API_KEY);
+export const dynamic = "force-dynamic";
+
+let _exa: Exa | null = null;
+async function getExa(): Promise<Exa> {
+  if (!_exa) {
+    const { default: ExaClient } = await import("exa-js");
+    _exa = new ExaClient(env.EXA_API_KEY);
+  }
+  return _exa;
+}
 
 const MAX_POLL_ITERATIONS = 30;
 const POLL_INTERVAL_MS = 10_000;
@@ -21,6 +30,7 @@ const requestSchema = z.object({
 });
 
 async function pollWebsetUntilDone(websetId: string) {
+  const exa = await getExa();
   for (let i = 0; i < MAX_POLL_ITERATIONS; i++) {
     const webset = await exa.websets.get(websetId);
     if (webset.status !== "running") {
@@ -32,6 +42,7 @@ async function pollWebsetUntilDone(websetId: string) {
 }
 
 async function fetchWebsetItems(websetId: string) {
+  const exa = await getExa();
   const items: unknown[] = [];
   let nextCursor: string | undefined;
   do {
@@ -58,6 +69,7 @@ export async function POST(request: Request) {
     if (action === "search_companies") {
       if (!query) return NextResponse.json({ ok: false, error: "query required" }, { status: 400 });
       const searchCriteria = criteria?.map((description) => ({ description }));
+      const exa = await getExa();
       const webset = await exa.websets.create({
         search: {
           query,
@@ -89,6 +101,7 @@ export async function POST(request: Request) {
 
     if (action === "search_people") {
       if (!query) return NextResponse.json({ ok: false, error: "query required" }, { status: 400 });
+      const exa = await getExa();
       const webset = await exa.websets.create({
         search: {
           query,
@@ -122,6 +135,7 @@ export async function POST(request: Request) {
 
     if (action === "get_status") {
       if (!websetId) return NextResponse.json({ ok: false, error: "websetId required" }, { status: 400 });
+      const exa = await getExa();
       const webset = await exa.websets.get(websetId);
       return NextResponse.json({
         ok: true,

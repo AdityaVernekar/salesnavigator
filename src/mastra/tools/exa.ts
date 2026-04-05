@@ -3,7 +3,11 @@ import { z } from "zod";
 import { createTool } from "@mastra/core/tools";
 import { env } from "@/lib/config/env";
 
-const exa = new Exa(env.EXA_API_KEY);
+let _exa: Exa | null = null;
+function getExa(): Exa {
+  if (!_exa) _exa = new Exa(env.EXA_API_KEY);
+  return _exa;
+}
 
 export const exaSearchTool = createTool({
   id: "exa-search",
@@ -24,7 +28,7 @@ export const exaSearchTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
-    const result = await exa.search(inputData.query, {
+    const result = await getExa().search(inputData.query, {
       numResults: inputData.numResults,
       type: inputData.type,
     });
@@ -56,7 +60,7 @@ export const exaFindSimilarTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
-    const result = await exa.findSimilar(inputData.url, {
+    const result = await getExa().findSimilar(inputData.url, {
       numResults: inputData.numResults,
       excludeSourceDomain: inputData.excludeSourceDomain,
     });
@@ -87,7 +91,7 @@ export const exaSearchAndContentsTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
-    const result = await exa.searchAndContents(inputData.query, {
+    const result = await getExa().searchAndContents(inputData.query, {
       numResults: inputData.numResults,
       text: true,
     });
@@ -112,7 +116,7 @@ export const exaResearchTool = createTool({
   }),
   execute: async (inputData, context) => {
     void context;
-    const researchApi = (exa as any).research;
+    const researchApi = (getExa() as any).research;
 
     // Exa SDK >=2.7 exposes `research` as a client (create + poll),
     // while older/internal wrappers may have a callable `research(...)`.
@@ -134,7 +138,7 @@ export const exaResearchTool = createTool({
     }
 
     // Graceful fallback so agents still get useful output if Research API is unavailable.
-    const fallback = await exa.answer(inputData.query, { text: true });
+    const fallback = await getExa().answer(inputData.query, { text: true });
     return { result: fallback };
   },
 });

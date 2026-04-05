@@ -3,7 +3,11 @@ import { z } from "zod";
 import { createTool } from "@mastra/core/tools";
 import { env } from "@/lib/config/env";
 
-const exa = new Exa(env.EXA_API_KEY);
+let _exa: Exa | null = null;
+function getExa(): Exa {
+  if (!_exa) _exa = new Exa(env.EXA_API_KEY);
+  return _exa;
+}
 
 const MAX_POLL_ITERATIONS = 30;
 const POLL_INTERVAL_MS = 10_000;
@@ -35,7 +39,7 @@ function setCachedWebsetId(key: string, websetId: string): void {
 async function pollWebsetUntilDone(websetId: string) {
   for (let i = 0; i < MAX_POLL_ITERATIONS; i++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    const webset = await exa.websets.get(websetId);
+    const webset = await getExa().websets.get(websetId);
     if (webset.status !== "running") {
       return webset;
     }
@@ -45,7 +49,7 @@ async function pollWebsetUntilDone(websetId: string) {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchWebsetItems(websetId: string): Promise<any[]> {
-  const response = await exa.websets.items.list(websetId);
+  const response = await getExa().websets.items.list(websetId);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (response as any).data ?? (response as any).items ?? [];
 }
@@ -82,7 +86,7 @@ export const exaWebsetCreateTool = createTool({
     const cachedId = getCachedWebsetId(cacheKey);
 
     if (cachedId) {
-      const existing = await exa.websets.get(cachedId);
+      const existing = await getExa().websets.get(cachedId);
       if (existing.status !== "running") {
         const items = await fetchWebsetItems(cachedId);
         return { websetId: cachedId, status: existing.status, itemCount: items.length, items };
@@ -96,7 +100,7 @@ export const exaWebsetCreateTool = createTool({
       description,
     }));
 
-    const webset = await exa.websets.create({
+    const webset = await getExa().websets.create({
       search: {
         query: inputData.query,
         entity: { type: inputData.entity },
@@ -157,7 +161,7 @@ export const exaWebsetSearchPeopleTool = createTool({
     const cachedId = getCachedWebsetId(cacheKey);
 
     if (cachedId) {
-      const existing = await exa.websets.get(cachedId);
+      const existing = await getExa().websets.get(cachedId);
       if (existing.status !== "running") {
         const items = await fetchWebsetItems(cachedId);
         return { websetId: cachedId, status: existing.status, itemCount: items.length, items };
@@ -174,7 +178,7 @@ export const exaWebsetSearchPeopleTool = createTool({
       },
     ];
 
-    const webset = await exa.websets.create({
+    const webset = await getExa().websets.create({
       search: {
         query: inputData.query,
         entity: { type: "person" },
@@ -328,7 +332,7 @@ export const exaWebsetSearchCompaniesTool = createTool({
     const cachedId = getCachedWebsetId(cacheKey);
 
     if (cachedId) {
-      const existing = await exa.websets.get(cachedId);
+      const existing = await getExa().websets.get(cachedId);
       if (existing.status !== "running") {
         const items = await fetchWebsetItems(cachedId);
         return { websetId: cachedId, status: existing.status, itemCount: items.length, items };
@@ -342,7 +346,7 @@ export const exaWebsetSearchCompaniesTool = createTool({
       description,
     }));
 
-    const webset = await exa.websets.create({
+    const webset = await getExa().websets.create({
       search: {
         query: inputData.query,
         entity: { type: "company" },
